@@ -64,6 +64,7 @@ class ListBlock:
     ordered: bool
     items: List[ListItem] = field(default_factory=list)
     tight: bool = True
+    level: int = 0
 
 
 @dataclass
