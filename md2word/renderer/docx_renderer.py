@@ -281,14 +281,18 @@ class DocxRenderer:
                 r = paragraph.add_run(run_data.text)
                 r.bold = run_data.bold
                 r.italic = run_data.italic
+                r.underline = run_data.underline
+                r.font.strike = run_data.strikethrough
+                r.font.superscript = run_data.superscript
+                r.font.subscript = run_data.subscript
 
                 if run_data.code:
                     r.font.name = "Consolas"
                     r.font.size = Pt(9)
                     r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
                 else:
-                    r.font.name = self.font_name
-                    r.font.size = Pt(self.font_size)
+                    r.font.name = run_data.font_name or self.font_name
+                    r.font.size = Pt(run_data.font_size or self.font_size)
 
     def _add_image_to_paragraph(self, paragraph, image: Image):
         img_path = self._resolve_image_path(image.src)
