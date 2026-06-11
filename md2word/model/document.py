@@ -9,6 +9,12 @@ class TextRun:
     bold: bool = False
     italic: bool = False
     code: bool = False
+    underline: bool = False
+    strikethrough: bool = False
+    superscript: bool = False
+    subscript: bool = False
+    font_name: Optional[str] = None
+    font_size: Optional[int] = None
 
 
 @dataclass
