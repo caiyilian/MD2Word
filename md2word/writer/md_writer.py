@@ -48,6 +48,8 @@ class MdWriter:
 
     def _write_paragraph(self, paragraph: Paragraph) -> str:
         text = self._write_inline(paragraph.runs)
+        if paragraph.alignment and paragraph.alignment != "left":
+            text = f'<p style="text-align:{paragraph.alignment}">{text}</p>'
         return f"{text}\n"
 
     def _write_code_block(self, code_block: CodeBlock) -> str:
@@ -122,7 +124,7 @@ class MdWriter:
             if image.align:
                 parts.append(f"align={image.align}")
             if parts:
-                attrs = "{" + " ".join(parts) + "}"
+                attrs = "{:" + " ".join(parts) + "}"
         return f"![{alt}]({src}){attrs}\n"
 
     def _write_formula(self, formula: Formula) -> str:
