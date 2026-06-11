@@ -35,30 +35,39 @@ def parse_frontmatter(text: str) -> Tuple[dict, str]:
 def _parse_img_attrs(attrs_str: str) -> dict:
     attrs = {}
     for part in attrs_str.split():
-        if "=" in part:
-            k, v = part.split("=", 1)
+        key = part.lstrip(":")
+        if "=" in key:
+            k, v = key.split("=", 1)
             attrs[k.strip()] = v.strip()
         else:
-            attrs[part.strip()] = True
+            attrs[key.strip()] = True
     return attrs
 
 
 def preprocess_image_attributes(text: str) -> Tuple[str, dict]:
     """Transform ![alt](path){:attrs} into ![alt](path) and return attrs lookup.
 
-    Returns (processed_text, {(src, alt): attrs_dict}).
+    Returns (processed_text, {image_index: attrs_dict}).
+    Index covers ALL images (with or without attrs) to stay in sync with parser.
     """
     attrs_map: dict = {}
+    counter = 0
 
     def _replacer(m):
+        nonlocal counter
         alt = m.group(1) or ""
         src = m.group(2) or ""
-        attrs = _parse_img_attrs(m.group(3))
-        key = (src, alt)
-        attrs_map[key] = attrs
+        raw_attrs = m.group(3) or ""
+        attrs = _parse_img_attrs(raw_attrs) if raw_attrs else {}
+        attrs_map[counter] = attrs
+        counter += 1
         return f"![{alt}]({src})"
 
-    text = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)\{([^}]*)\}', _replacer, text)
+    # Match all ![alt](src) optionally followed by {:attrs}
+    text = re.sub(
+        r'!\[([^\]]*)\]\(([^)]+)\)(?:{([^}]*)})?',
+        _replacer, text,
+    )
     return text, attrs_map
 
 
@@ -69,10 +78,12 @@ class MarkdownParser:
             plugins=[import_plugin("table")],
         )
         self._img_attrs_map: dict = {}
+        self._img_index: int = 0
 
     def parse(self, text: str) -> Document:
         metadata, body = parse_frontmatter(text)
         body, self._img_attrs_map = preprocess_image_attributes(body)
+        self._img_index = 0
         try:
             ast = self.md(body)
         except Exception as e:
@@ -117,8 +128,15 @@ class MarkdownParser:
         runs = self._parse_inline(token.get("children", []))
         return Heading(level=level, runs=runs)
 
-    def _parse_paragraph(self, token: dict) -> Paragraph:
+    def _parse_paragraph(self, token: dict) -> BlockElement:
         runs = self._parse_inline(token.get("children", []))
+        # Standalone image -> return as block-level Image for proper alignment
+        if len(runs) == 1 and isinstance(runs[0], Image):
+            img = runs[0]
+            return Image(
+                src=img.src, alt=img.alt,
+                width=img.width, height=img.height, align=img.align,
+            )
         return Paragraph(runs=runs)
 
     def _parse_code_block(self, token: dict) -> CodeBlock:
@@ -248,8 +266,8 @@ class MarkdownParser:
                 for c in token.get("children", []):
                     if c.get("type") == "text":
                         alt = c.get("raw", "")
-                # Look up extra attributes from pre-processing
-                extra = self._img_attrs_map.get((src, alt), {})
+                extra = self._img_attrs_map.get(self._img_index, {})
+                self._img_index += 1
                 img = Image(
                     src=src,
                     alt=alt,

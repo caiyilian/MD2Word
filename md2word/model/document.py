@@ -42,7 +42,7 @@ class CodeBlock:
 
 @dataclass
 class ListItem:
-    elements: List[Union[Paragraph, CodeBlock]] = field(default_factory=list)
+    elements: List[Union[Paragraph, CodeBlock, Image]] = field(default_factory=list)
 
 
 @dataclass
