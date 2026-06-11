@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import os
 import sys
 
 from md2word import MD2Word
@@ -25,6 +26,8 @@ def build_parser():
                         help="Path to YAML style config file")
     parser.add_argument("--reverse", "-r", action="store_true",
                         help="Reverse mode: convert .docx to .md")
+    parser.add_argument("--ocr", action="store_true",
+                        help="Run OCR on images and extract text to md")
     return parser
 
 
@@ -53,21 +56,34 @@ def _do_convert(args):
 
 def _do_reverse(args):
     input_path = args.input
-    output_path = args.output
-    if output_path is None:
-        if input_path.lower().endswith(".docx"):
-            output_path = input_path[:-5] + ".md"
-        else:
-            output_path = input_path + ".md"
+    input_base = os.path.splitext(os.path.basename(input_path))[0]
+    output_target = args.output
 
-    extractor = DocxExtractor()
+    if output_target is None:
+        subfolder = input_base
+    elif output_target.lower().endswith(".md"):
+        subfolder = os.path.splitext(os.path.basename(output_target))[0]
+    else:
+        subfolder = os.path.basename(output_target)
+
+    output_dir = os.path.join("output", subfolder)
+    images_dir = os.path.join(output_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+
+    md_filename = subfolder + ".md"
+    md_path = os.path.join(output_dir, md_filename)
+
+    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr)
     doc = extractor.extract(input_path)
     writer = MdWriter(default_font_name=args.font_name,
                       default_font_size=args.font_size)
     md_text = writer.write(doc)
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_text)
-    print(f"Converted: {input_path} -> {output_path}")
+    print(f"Converted: {input_path} -> {md_path}")
+    img_count = len(extractor._saved_images)
+    if img_count:
+        print(f"Images extracted: {img_count} (saved to {images_dir}/)")
 
 
 def main():

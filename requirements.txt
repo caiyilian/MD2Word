@@ -3,3 +3,7 @@ python-docx>=1.1.0
 pyyaml>=6.0
 latex2mathml>=3.77.0
 lxml>=4.9
+
+# Optional: OCR support for docx-to-md image text extraction
+# paddleocr>=3.6.0
+# paddlepaddle>=3.0.0

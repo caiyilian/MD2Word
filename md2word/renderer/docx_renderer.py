@@ -9,8 +9,9 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 from md2word.model.document import (
-    TextRun, Image, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, Table, HorizontalRule, Formula,
+    TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
+    ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
+    Footnote, Comment,
     Document, InlineElement, BlockElement,
 )
 from md2word.renderer.formula_converter import latex_to_omml
@@ -31,8 +32,28 @@ class DocxRenderer:
         self._apply_style_config(doc)
         self._set_default_style(doc)
 
+        # Collect footnotes and comments from document
+        footnotes = [e for e in document.elements if isinstance(e, Footnote)]
+        comments = [e for e in document.elements if isinstance(e, Comment)]
+
+        # Create footnotes part if needed
+        if footnotes:
+            self._create_footnotes_part(doc, footnotes)
+
+        # Create comments part if needed
+        if comments:
+            self._create_comments_part(doc, comments)
+
+        # Render non-footnote, non-comment elements
         for element in document.elements:
-            self._render_element(doc, element)
+            if not isinstance(element, (Footnote, Comment)):
+                self._render_element(doc, element)
+
+        # Post-process: insert footnote references and comment ranges
+        if footnotes:
+            self._insert_footnote_references(doc)
+        if comments:
+            self._insert_comment_ranges(doc, comments)
 
         doc.save(output_path)
         return output_path
@@ -93,6 +114,9 @@ class DocxRenderer:
             self._render_horizontal_rule(doc)
         elif isinstance(element, Formula):
             self._render_formula(doc, element)
+        elif isinstance(element, PageBreak):
+            self._render_page_break(doc)
+        # Footnote and Comment are handled in render() post-processing
 
     def _render_heading(self, doc: DocxDocument, heading: Heading):
         style_name = f"Heading {heading.level}"
@@ -301,6 +325,8 @@ class DocxRenderer:
                 self._add_image_to_paragraph(paragraph, run_data)
             elif isinstance(run_data, Formula):
                 self._insert_omml(paragraph, run_data.latex)
+            elif isinstance(run_data, Hyperlink):
+                self._render_hyperlink(paragraph, run_data)
             elif isinstance(run_data, TextRun):
                 if not run_data.text:
                     continue
@@ -359,3 +385,391 @@ class DocxRenderer:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         elif align == "left":
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    # ---- Footnotes ----
+
+    def _create_footnotes_part(self, doc: DocxDocument, footnotes: List[Footnote]):
+        """Create word/footnotes.xml with footnote text."""
+        from lxml import etree
+
+        NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+        # Build footnotes XML
+        footnotes_xml = etree.Element(f"{{{NS_W}}}footnotes",
+                                      nsmap={"w": NS_W, "r": NS_R})
+
+        # Separator footnote (id=-1)
+        sep_fn = etree.SubElement(footnotes_xml, f"{{{NS_W}}}footnote")
+        sep_fn.set(f"{{{NS_W}}}type", "separator")
+        sep_fn.set(f"{{{NS_W}}}id", "-1")
+        sep_p = etree.SubElement(sep_fn, f"{{{NS_W}}}p")
+        sep_pPr = etree.SubElement(sep_p, f"{{{NS_W}}}pPr")
+        sep_spacing = etree.SubElement(sep_pPr, f"{{{NS_W}}}spacing")
+        sep_spacing.set(f"{{{NS_W}}}after", "0")
+        sep_spacing.set(f"{{{NS_W}}}line", "240")
+        sep_spacing.set(f"{{{NS_W}}}lineRule", "auto")
+        sep_r = etree.SubElement(sep_p, f"{{{NS_W}}}r")
+        etree.SubElement(sep_r, f"{{{NS_W}}}separator")
+
+        # ContinuationSeparator footnote (id=0)
+        cont_fn = etree.SubElement(footnotes_xml, f"{{{NS_W}}}footnote")
+        cont_fn.set(f"{{{NS_W}}}type", "continuationSeparator")
+        cont_fn.set(f"{{{NS_W}}}id", "0")
+        cont_p = etree.SubElement(cont_fn, f"{{{NS_W}}}p")
+        cont_pPr = etree.SubElement(cont_p, f"{{{NS_W}}}pPr")
+        cont_spacing = etree.SubElement(cont_pPr, f"{{{NS_W}}}spacing")
+        cont_spacing.set(f"{{{NS_W}}}after", "0")
+        cont_spacing.set(f"{{{NS_W}}}line", "240")
+        cont_spacing.set(f"{{{NS_W}}}lineRule", "auto")
+        cont_r = etree.SubElement(cont_p, f"{{{NS_W}}}r")
+        etree.SubElement(cont_r, f"{{{NS_W}}}continuationSeparator")
+
+        # Add actual footnotes
+        for idx, fn in enumerate(footnotes, start=2):
+            fn_elem = etree.SubElement(footnotes_xml, f"{{{NS_W}}}footnote")
+            fn_elem.set(f"{{{NS_W}}}id", str(idx))
+            p = etree.SubElement(fn_elem, f"{{{NS_W}}}p")
+            pPr = etree.SubElement(p, f"{{{NS_W}}}pPr")
+            pStyle = etree.SubElement(pPr, f"{{{NS_W}}}pStyle")
+            pStyle.set(f"{{{NS_W}}}val", "FootnoteText")
+            # Footnote reference marker
+            r_ref = etree.SubElement(p, f"{{{NS_W}}}r")
+            rPr_ref = etree.SubElement(r_ref, f"{{{NS_W}}}rPr")
+            rStyle = etree.SubElement(rPr_ref, f"{{{NS_W}}}rStyle")
+            rStyle.set(f"{{{NS_W}}}val", "FootnoteReference")
+            vertAlign = etree.SubElement(rPr_ref, f"{{{NS_W}}}vertAlign")
+            vertAlign.set(f"{{{NS_W}}}val", "superscript")
+            etree.SubElement(r_ref, f"{{{NS_W}}}footnoteRef")
+            # Footnote text
+            r_text = etree.SubElement(p, f"{{{NS_W}}}r")
+            t = etree.SubElement(r_text, f"{{{NS_W}}}t")
+            t.text = " " + fn.text
+            t.set(f"{{{NS_W}}}space", "preserve")
+
+        # Save to part
+        blob = etree.tostring(footnotes_xml, xml_declaration=True,
+                              encoding="UTF-8", standalone=True)
+        from docx.opc.part import Part
+        from docx.opc.packuri import PackURI
+        part = Part(
+            PackURI("/word/footnotes.xml"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml",
+            blob, doc.part.package,
+        )
+        doc.part.relate_to(
+            part,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+        )
+
+        # Store footnote id mapping for reference insertion
+        self._footnote_id_map = {fn.footnote_id: idx for idx, fn in enumerate(footnotes, start=2)}
+
+    def _insert_footnote_references(self, doc: DocxDocument):
+        """Replace [^id] text in runs with footnote references."""
+        import re
+        NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        FN_REF_RE = re.compile(r'\[\^(\w+)\]')
+
+        for para in doc.paragraphs:
+            # Join all run text to find footnote references
+            full_text = "".join(r.text for r in para.runs)
+            if not FN_REF_RE.search(full_text):
+                continue
+
+            # Clear all runs
+            for run in para.runs:
+                run.text = ""
+
+            # Rebuild text with footnote references
+            parts = FN_REF_RE.split(full_text)
+            # parts: ['text', 'id1', 'text', 'id2', 'text', ...]
+
+            # Use the first run for text, create new runs for the rest
+            first_run = para.runs[0] if para.runs else para.add_run()
+            run_idx = 0
+
+            for i, part in enumerate(parts):
+                if i % 2 == 0:
+                    # Regular text
+                    if part:
+                        if run_idx == 0:
+                            first_run.text = part
+                        else:
+                            new_run = para.add_run(part)
+                            new_run.font.name = first_run.font.name
+                            new_run.font.size = first_run.font.size
+                        run_idx += 1
+                else:
+                    # Footnote reference id
+                    fn_id = part
+                    if fn_id in self._footnote_id_map:
+                        fn_num = self._footnote_id_map[fn_id]
+                        # Insert footnote reference
+                        r_elem = OxmlElement("w:r")
+                        rPr = OxmlElement("w:rPr")
+                        vertAlign = OxmlElement("w:vertAlign")
+                        vertAlign.set(qn("w:val"), "superscript")
+                        rPr.append(vertAlign)
+                        r_elem.append(rPr)
+                        fn_ref = OxmlElement("w:footnoteReference")
+                        fn_ref.set(qn("w:id"), str(fn_num))
+                        r_elem.append(fn_ref)
+                        para._p.append(r_elem)
+
+    # ---- Comments ----
+
+    def _create_comments_part(self, doc: DocxDocument, comments: List[Comment]):
+        """Create word/comments.xml with comment text."""
+        from lxml import etree
+
+        NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+        comments_xml = etree.Element(f"{{{NS_W}}}comments",
+                                     nsmap={"w": NS_W, "r": NS_R})
+
+        self._comment_id_map = {}
+        for idx, cm in enumerate(comments):
+            cm_id = str(idx)
+            self._comment_id_map[cm.text] = cm_id
+
+            cm_elem = etree.SubElement(comments_xml, f"{{{NS_W}}}comment")
+            cm_elem.set(f"{{{NS_W}}}id", cm_id)
+            cm_elem.set(f"{{{NS_W}}}author", cm.author or "Anonymous")
+            cm_elem.set(f"{{{NS_W}}}date", cm.date or "2026-01-01T00:00:00Z")
+            cm_elem.set(f"{{{NS_W}}}initials", (cm.author or "A")[0])
+
+            p = etree.SubElement(cm_elem, f"{{{NS_W}}}p")
+            r = etree.SubElement(p, f"{{{NS_W}}}r")
+            t = etree.SubElement(r, f"{{{NS_W}}}t")
+            t.text = cm.text
+            t.set(f"{{{NS_W}}}space", "preserve")
+
+        # Save to part
+        blob = etree.tostring(comments_xml, xml_declaration=True,
+                              encoding="UTF-8", standalone=True)
+        from docx.opc.part import Part
+        from docx.opc.packuri import PackURI
+        part = Part(
+            PackURI("/word/comments.xml"),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+            blob, doc.part.package,
+        )
+        doc.part.relate_to(
+            part,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        )
+
+    def _insert_comment_ranges(self, doc: DocxDocument, comments: List[Comment]):
+        """Insert comment range markers around target text in paragraphs."""
+        if not comments:
+            return
+
+        for idx, cm in enumerate(comments):
+            cm_id = self._comment_id_map.get(cm.text, str(idx))
+
+            if not cm.target:
+                # No target, wrap whole paragraph
+                paras = [p for p in doc.paragraphs
+                         if p.text.strip()
+                         and not (p.style and p.style.name.startswith("Heading"))]
+                if idx < len(paras):
+                    self._wrap_paragraph_with_comment(paras[idx], cm_id)
+                continue
+
+            # Find paragraph containing target text (prefer last match)
+            target_para = None
+            for para in doc.paragraphs:
+                if para.style and para.style.name.startswith("Heading"):
+                    continue
+                full_text = "".join(r.text for r in para.runs)
+                if cm.target in full_text:
+                    target_para = para  # Keep last match
+
+            if target_para is None:
+                continue
+
+            # Try to wrap just the target text precisely
+            if not self._wrap_text_with_comment(target_para, cm.target, cm_id):
+                # Fallback: wrap whole paragraph
+                self._wrap_paragraph_with_comment(target_para, cm_id)
+
+    def _wrap_text_with_comment(self, paragraph, target: str, cm_id: str) -> bool:
+        """Wrap specific target text with comment markers. Returns True if successful."""
+        runs = paragraph.runs
+        if not runs:
+            return False
+
+        # Find which run(s) contain the target text
+        for run_idx, run in enumerate(runs):
+            if target not in run.text:
+                continue
+
+            # Found the run containing the target
+            text = run.text
+            pos = text.find(target)
+            before = text[:pos]
+            after = text[pos + len(target):]
+
+            # Clear the original run
+            run.text = ""
+
+            # Get run formatting for new runs
+            font_name = run.font.name
+            font_size = run.font.size
+
+            # Create run for text before target (inserted first)
+            if before:
+                r_before = OxmlElement("w:r")
+                rPr = OxmlElement("w:rPr")
+                if font_name:
+                    rFonts = OxmlElement("w:rFonts")
+                    rFonts.set(qn("w:ascii"), font_name)
+                    rFonts.set(qn("w:hAnsi"), font_name)
+                    rPr.append(rFonts)
+                if font_size:
+                    sz = OxmlElement("w:sz")
+                    sz.set(qn("w:val"), str(int(font_size.pt * 2)))
+                    rPr.append(sz)
+                r_before.append(rPr)
+                t_before = OxmlElement("w:t")
+                t_before.text = before
+                t_before.set(qn("w:space"), "preserve")
+                r_before.append(t_before)
+                run._r.addprevious(r_before)
+
+            # Insert commentRangeStart BEFORE target run
+            range_start = OxmlElement("w:commentRangeStart")
+            range_start.set(qn("w:id"), cm_id)
+            run._r.addprevious(range_start)
+
+            # Create run for the target text
+            r_target = OxmlElement("w:r")
+            rPr = OxmlElement("w:rPr")
+            if font_name:
+                rFonts = OxmlElement("w:rFonts")
+                rFonts.set(qn("w:ascii"), font_name)
+                rFonts.set(qn("w:hAnsi"), font_name)
+                rPr.append(rFonts)
+            if font_size:
+                sz = OxmlElement("w:sz")
+                sz.set(qn("w:val"), str(int(font_size.pt * 2)))
+                rPr.append(sz)
+            r_target.append(rPr)
+            t_target = OxmlElement("w:t")
+            t_target.text = target
+            t_target.set(qn("w:space"), "preserve")
+            r_target.append(t_target)
+            run._r.addprevious(r_target)
+
+            # Insert commentRangeEnd AFTER target run
+            range_end = OxmlElement("w:commentRangeEnd")
+            range_end.set(qn("w:id"), cm_id)
+            run._r.addprevious(range_end)
+
+            # Create run for text after target
+            if after:
+                r_after = OxmlElement("w:r")
+                rPr = OxmlElement("w:rPr")
+                if font_name:
+                    rFonts = OxmlElement("w:rFonts")
+                    rFonts.set(qn("w:ascii"), font_name)
+                    rFonts.set(qn("w:hAnsi"), font_name)
+                    rPr.append(rFonts)
+                if font_size:
+                    sz = OxmlElement("w:sz")
+                    sz.set(qn("w:val"), str(int(font_size.pt * 2)))
+                    rPr.append(sz)
+                r_after.append(rPr)
+                t_after = OxmlElement("w:t")
+                t_after.text = after
+                t_after.set(qn("w:space"), "preserve")
+                r_after.append(t_after)
+                run._r.addprevious(r_after)
+
+            # Add comment reference at end of paragraph
+            r_ref = OxmlElement("w:r")
+            rPr = OxmlElement("w:rPr")
+            rStyle = OxmlElement("w:rStyle")
+            rStyle.set(qn("w:val"), "CommentReference")
+            rPr.append(rStyle)
+            r_ref.append(rPr)
+            cm_ref = OxmlElement("w:commentReference")
+            cm_ref.set(qn("w:id"), cm_id)
+            r_ref.append(cm_ref)
+            paragraph._p.append(r_ref)
+
+            return True
+
+        return False
+
+    def _wrap_paragraph_with_comment(self, paragraph, cm_id: str):
+        """Wrap entire paragraph with comment markers."""
+        range_start = OxmlElement("w:commentRangeStart")
+        range_start.set(qn("w:id"), cm_id)
+        paragraph._p.insert(0, range_start)
+
+        range_end = OxmlElement("w:commentRangeEnd")
+        range_end.set(qn("w:id"), cm_id)
+        paragraph._p.append(range_end)
+
+        r_elem = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        rStyle = OxmlElement("w:rStyle")
+        rStyle.set(qn("w:val"), "CommentReference")
+        rPr.append(rStyle)
+        r_elem.append(rPr)
+        cm_ref = OxmlElement("w:commentReference")
+        cm_ref.set(qn("w:id"), cm_id)
+        r_elem.append(cm_ref)
+        paragraph._p.append(r_elem)
+
+    def _render_page_break(self, doc: DocxDocument):
+        p = doc.add_paragraph()
+        run = p.add_run()
+        br = OxmlElement("w:br")
+        br.set(qn("w:type"), "page")
+        run._r.append(br)
+
+    def _render_hyperlink(self, paragraph, hyperlink: Hyperlink):
+        """Render a hyperlink as w:hyperlink element."""
+        NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+        # Add relationship
+        rId_num = 1
+        while f"rId{rId_num}" in paragraph.part.rels:
+            rId_num += 1
+        rId = f"rId{rId_num}"
+        paragraph.part.rels.add_relationship(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            hyperlink.url, rId, is_external=True,
+        )
+
+        # Create hyperlink element
+        hl_elem = OxmlElement("w:hyperlink")
+        hl_elem.set(qn("r:id"), rId)
+
+        # Add runs inside hyperlink
+        for run_data in hyperlink.runs:
+            r = OxmlElement("w:r")
+            rPr = OxmlElement("w:rPr")
+            color = OxmlElement("w:color")
+            color.set(qn("w:val"), "0563C1")
+            rPr.append(color)
+            u = OxmlElement("w:u")
+            u.set(qn("w:val"), "single")
+            rPr.append(u)
+            if run_data.bold:
+                b = OxmlElement("w:b")
+                rPr.append(b)
+            if run_data.italic:
+                i = OxmlElement("w:i")
+                rPr.append(i)
+            r.append(rPr)
+            t = OxmlElement("w:t")
+            t.text = run_data.text
+            r.append(t)
+            hl_elem.append(r)
+
+        paragraph._p.append(hl_elem)

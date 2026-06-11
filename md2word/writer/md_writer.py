@@ -2,8 +2,9 @@ from __future__ import annotations
 from typing import List
 
 from md2word.model.document import (
-    TextRun, Image, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, Table, HorizontalRule, Formula,
+    TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
+    ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
+    Footnote, Comment,
     Document, InlineElement, BlockElement,
 )
 
@@ -39,6 +40,12 @@ class MdWriter:
             return "---"
         if isinstance(element, Formula):
             return self._write_formula(element)
+        if isinstance(element, PageBreak):
+            return "\f"
+        if isinstance(element, Footnote):
+            return f"[^{element.footnote_id}]: {element.text}"
+        if isinstance(element, Comment):
+            return f'<!-- {element.author}: {element.text} -->\n'
         return ""
 
     def _write_heading(self, heading: Heading) -> str:
@@ -122,8 +129,13 @@ class MdWriter:
             if image.align:
                 parts.append(f"align={image.align}")
             if parts:
-                attrs = "{" + " ".join(parts) + "}"
-        return f"![{alt}]({src}){attrs}\n"
+                attrs = "{:" + " ".join(parts) + "}"
+        img_line = f"![{alt}]({src}){attrs}\n"
+        if image.ocr_text:
+            img_line += f"\n> OCR 文本：\n>\n"
+            for line in image.ocr_text.split("\n"):
+                img_line += f"> {line}\n"
+        return img_line
 
     def _write_formula(self, formula: Formula) -> str:
         latex = formula.latex
@@ -141,7 +153,13 @@ class MdWriter:
                 parts.append(self._format_text_run(run))
             elif isinstance(run, Formula):
                 parts.append(self._write_formula(run).strip())
+            elif isinstance(run, Hyperlink):
+                parts.append(self._format_hyperlink(run))
         return "".join(parts)
+
+    def _format_hyperlink(self, hyperlink: Hyperlink) -> str:
+        text = "".join(self._format_text_run(r) for r in hyperlink.runs)
+        return f"[{text}]({hyperlink.url})"
 
     def _format_text_run(self, run: TextRun) -> str:
         text = run.text
