@@ -13,6 +13,7 @@ setup(
     entry_points={
         "console_scripts": [
             "md2word=md2word.cli.main:main",
+            "docx2md=md2word.cli.main:docx2md_main",
         ],
     },
     python_requires=">=3.8",
