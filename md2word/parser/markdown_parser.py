@@ -1,25 +1,26 @@
 from __future__ import annotations
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import yaml
 import mistune
-
-
-class _ASTRenderer:
-    """Custom renderer that returns raw token list."""
-    def __call__(self, tokens, state):
-        return list(tokens)
+from mistune import import_plugin
 
 from md2word.model.document import (
-    TextRun, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, HorizontalRule, Document,
-    BlockElement,
+    TextRun, Image, Heading, Paragraph, CodeBlock,
+    ListBlock, ListItem, Table, HorizontalRule, Document,
+    InlineElement, BlockElement,
 )
 from md2word.exceptions import ParseError
 
 
-def parse_frontmatter(text: str):
+class _ASTRenderer:
+    NAME = "ast"
+    def __call__(self, tokens, state):
+        return list(tokens)
+
+
+def parse_frontmatter(text: str) -> Tuple[dict, str]:
     match = re.match(r'^---\s*\n(.*?)\n---\s*\n', text, re.DOTALL)
     if match:
         try:
@@ -31,18 +32,55 @@ def parse_frontmatter(text: str):
     return {}, text
 
 
+def _parse_img_attrs(attrs_str: str) -> dict:
+    attrs = {}
+    for part in attrs_str.split():
+        if "=" in part:
+            k, v = part.split("=", 1)
+            attrs[k.strip()] = v.strip()
+        else:
+            attrs[part.strip()] = True
+    return attrs
+
+
+def preprocess_image_attributes(text: str) -> Tuple[str, dict]:
+    """Transform ![alt](path){:attrs} into ![alt](path) and return attrs lookup.
+
+    Returns (processed_text, {(src, alt): attrs_dict}).
+    """
+    attrs_map: dict = {}
+
+    def _replacer(m):
+        alt = m.group(1) or ""
+        src = m.group(2) or ""
+        attrs = _parse_img_attrs(m.group(3))
+        key = (src, alt)
+        attrs_map[key] = attrs
+        return f"![{alt}]({src})"
+
+    text = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)\{([^}]*)\}', _replacer, text)
+    return text, attrs_map
+
+
 class MarkdownParser:
     def __init__(self):
-        self.md = mistune.Markdown(renderer=_ASTRenderer())
+        self.md = mistune.Markdown(
+            renderer=_ASTRenderer(),
+            plugins=[import_plugin("table")],
+        )
+        self._img_attrs_map: dict = {}
 
     def parse(self, text: str) -> Document:
         metadata, body = parse_frontmatter(text)
+        body, self._img_attrs_map = preprocess_image_attributes(body)
         try:
             ast = self.md(body)
         except Exception as e:
             raise ParseError(f"Failed to parse markdown: {e}") from e
         elements = self._parse_blocks(ast)
         return Document(metadata=metadata, elements=elements)
+
+    # ---- block parsing ----
 
     def _parse_blocks(self, tokens: list) -> List[BlockElement]:
         elements: List[BlockElement] = []
@@ -54,7 +92,6 @@ class MarkdownParser:
 
     def _parse_block(self, token: dict) -> Optional[BlockElement]:
         t = token.get("type", "")
-
         if t == "heading":
             return self._parse_heading(token)
         elif t == "paragraph":
@@ -65,14 +102,15 @@ class MarkdownParser:
             return self._parse_code_block(token)
         elif t == "list":
             return self._parse_list(token)
+        elif t == "table":
+            return self._parse_table(token)
         elif t == "thematic_break":
             return HorizontalRule()
         elif t == "blank_line":
             return None
         elif t == "block_quote":
             return self._parse_block_quote(token)
-        else:
-            return None
+        return None
 
     def _parse_heading(self, token: dict) -> Heading:
         level = token.get("attrs", {}).get("level", 1)
@@ -98,17 +136,16 @@ class MarkdownParser:
 
     def _parse_block_quote(self, token: dict) -> BlockElement:
         children = token.get("children", [])
-        quote_text = ""
+        lines: List[str] = []
         for child in children:
             ct = child.get("type", "")
-            if ct == "paragraph":
+            if ct in ("paragraph", "block_text"):
                 runs = self._parse_inline(child.get("children", []))
-                quote_text += "".join(r.text for r in runs) + "\n"
-            elif ct == "block_text":
-                runs = self._parse_inline(child.get("children", []))
-                quote_text += "".join(r.text for r in runs) + "\n"
-        # Render blockquote as a normal paragraph for now
-        return Paragraph(runs=[TextRun(text=quote_text.strip(), italic=True)])
+                text = "".join(
+                    r.text for r in runs if isinstance(r, TextRun)
+                )
+                lines.append(text)
+        return Paragraph(runs=[TextRun(text="\n".join(lines), italic=True)])
 
     def _parse_list(self, token: dict) -> ListBlock:
         attrs = token.get("attrs", {})
@@ -127,9 +164,7 @@ class MarkdownParser:
         elements: List[BlockElement] = []
         for child in children:
             ct = child.get("type", "")
-            if ct == "paragraph":
-                elements.append(self._parse_paragraph(child))
-            elif ct == "block_text":
+            if ct in ("paragraph", "block_text"):
                 elements.append(self._parse_paragraph(child))
             elif ct == "list":
                 elements.append(self._parse_list(child))
@@ -139,9 +174,54 @@ class MarkdownParser:
             return None
         return ListItem(elements=elements)
 
-    def _parse_inline(self, tokens: list, bold: bool = False,
-                      italic: bool = False, code: bool = False) -> List[TextRun]:
-        runs: List[TextRun] = []
+    def _parse_table(self, token: dict) -> Table:
+        headers: List[str] = []
+        rows: List[List[str]] = []
+        align: List[Optional[str]] = []
+
+        children = token.get("children", [])
+
+        # Extract column alignment from head cells
+        def _cell_text(cell_token: dict) -> str:
+            parts: List[str] = []
+            for c in cell_token.get("children", []):
+                if c.get("type") == "text":
+                    parts.append(c.get("raw", ""))
+                elif c.get("type") == "codespan":
+                    parts.append(c.get("raw", ""))
+                elif c.get("type") in ("strong", "emphasis"):
+                    for cc in c.get("children", []):
+                        if cc.get("type") == "text":
+                            parts.append(cc.get("raw", ""))
+            return "".join(parts)
+
+        for child in children:
+            ct = child.get("type", "")
+            if ct == "table_head":
+                for cell in child.get("children", []):
+                    if cell.get("type") == "table_cell":
+                        cell_align = cell.get("attrs", {}).get("align")
+                        align.append(cell_align)
+                        headers.append(_cell_text(cell))
+            elif ct == "table_body":
+                for row in child.get("children", []):
+                    if row.get("type") == "table_row":
+                        row_cells: List[str] = []
+                        for cell in row.get("children", []):
+                            if cell.get("type") == "table_cell":
+                                row_cells.append(_cell_text(cell))
+                        if row_cells:
+                            rows.append(row_cells)
+
+        return Table(headers=headers, rows=rows, align=align)
+
+    # ---- inline parsing ----
+
+    def _parse_inline(
+        self, tokens: list, bold: bool = False,
+        italic: bool = False, code: bool = False,
+    ) -> List[InlineElement]:
+        runs: List[InlineElement] = []
         for token in tokens:
             t = token.get("type", "")
             if t == "text":
@@ -151,25 +231,40 @@ class MarkdownParser:
                 ))
             elif t == "strong":
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(children, bold=True, italic=italic, code=code))
+                runs.extend(self._parse_inline(children, True, italic, code))
             elif t == "emphasis":
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(children, bold=bold, italic=True, code=code))
+                runs.extend(self._parse_inline(children, bold, True, code))
             elif t == "codespan":
                 runs.append(TextRun(
                     text=token.get("raw", ""),
                     bold=bold, italic=italic, code=True,
                 ))
-            elif t == "softbreak" or t == "linebreak":
+            elif t in ("softbreak", "linebreak"):
                 runs.append(TextRun(text=" ", bold=bold, italic=italic, code=code))
             elif t == "image":
-                alt = token.get("attrs", {}).get("alt", "")
-                runs.append(TextRun(text=f"[图片: {alt}]"))
+                src = token.get("attrs", {}).get("url", "")
+                alt = ""
+                for c in token.get("children", []):
+                    if c.get("type") == "text":
+                        alt = c.get("raw", "")
+                # Look up extra attributes from pre-processing
+                extra = self._img_attrs_map.get((src, alt), {})
+                img = Image(
+                    src=src,
+                    alt=alt,
+                    width=extra.get("width"),
+                    height=extra.get("height"),
+                    align=extra.get("align"),
+                )
+                runs.append(img)
             elif t == "link":
                 children = token.get("children", [])
                 runs.extend(self._parse_inline(children, bold, italic, code))
             else:
                 raw = token.get("raw", "")
                 if raw:
-                    runs.append(TextRun(text=raw, bold=bold, italic=italic, code=code))
+                    runs.append(TextRun(
+                        text=raw, bold=bold, italic=italic, code=code,
+                    ))
         return runs

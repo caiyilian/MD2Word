@@ -12,14 +12,26 @@ class TextRun:
 
 
 @dataclass
+class Image:
+    src: str
+    alt: str = ""
+    width: Optional[str] = None
+    height: Optional[str] = None
+    align: Optional[str] = None
+
+
+InlineElement = Union[TextRun, Image]
+
+
+@dataclass
 class Heading:
     level: int
-    runs: List[TextRun] = field(default_factory=list)
+    runs: List[InlineElement] = field(default_factory=list)
 
 
 @dataclass
 class Paragraph:
-    runs: List[TextRun] = field(default_factory=list)
+    runs: List[InlineElement] = field(default_factory=list)
 
 
 @dataclass
@@ -41,11 +53,18 @@ class ListBlock:
 
 
 @dataclass
+class Table:
+    headers: List[str] = field(default_factory=list)
+    rows: List[List[str]] = field(default_factory=list)
+    align: List[Optional[str]] = field(default_factory=list)
+
+
+@dataclass
 class HorizontalRule:
     pass
 
 
-BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, HorizontalRule]
+BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule]
 
 
 @dataclass
