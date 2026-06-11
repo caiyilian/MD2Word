@@ -79,6 +79,12 @@ class HorizontalRule:
 
 
 @dataclass
+class Blockquote:
+    runs: List[InlineElement] = field(default_factory=list)
+    level: int = 1
+
+
+@dataclass
 class Formula:
     latex: str
     display: bool = False
@@ -104,7 +110,7 @@ class Comment:
     target: Optional[str] = None
 
 
-BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula, PageBreak, Footnote, Comment]
+BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula, PageBreak, Footnote, Comment, Blockquote]
 
 
 @dataclass

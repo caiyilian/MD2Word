@@ -4,7 +4,7 @@ from typing import List
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
     ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
-    Footnote, Comment,
+    Footnote, Comment, Blockquote,
     Document, InlineElement, BlockElement,
 )
 
@@ -83,6 +83,8 @@ class MdWriter:
             return f"[^{element.footnote_id}]: {element.text}"
         if isinstance(element, Comment):
             return f'<!-- {element.author}: {element.text} -->\n'
+        if isinstance(element, Blockquote):
+            return self._write_blockquote(element)
         return ""
 
     def _write_heading(self, heading: Heading) -> str:
@@ -180,6 +182,12 @@ class MdWriter:
             return f"$$\n{latex}\n$$\n"
         else:
             return f"${latex}$\n"
+
+    def _write_blockquote(self, blockquote: Blockquote) -> str:
+        text = self._write_inline(blockquote.runs)
+        prefix = "> " * blockquote.level
+        lines = text.split("\n")
+        return "\n".join(f"{prefix}{line}" if line.strip() else ">" for line in lines) + "\n"
 
     def _write_inline(self, runs: List[InlineElement]) -> str:
         parts: List[str] = []
