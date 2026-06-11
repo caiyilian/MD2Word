@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List
+from typing import Dict, List, Optional
 
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
@@ -11,9 +11,11 @@ from md2word.model.document import (
 
 class MdWriter:
     def __init__(self, default_font_name: str = "\u7b49\u7ebf",
-                 default_font_size: int = 12):
+                 default_font_size: int = 12,
+                 style_mappings: Optional[Dict[str, str]] = None):
         self.default_font_name = default_font_name
         self.default_font_size = default_font_size
+        self._style_mappings = style_mappings or {}
 
     def write(self, document: Document) -> str:
         lines: List[str] = []
@@ -102,8 +104,10 @@ class MdWriter:
 
     def _write_list(self, list_block: ListBlock) -> str:
         lines: List[str] = []
+        indent = "  " * list_block.level
         for idx, item in enumerate(list_block.items, start=1):
-            lines.extend(self._write_list_item(item, list_block.ordered, idx))
+            lines.extend(self._write_list_item(item, list_block.ordered, idx,
+                                               depth=list_block.level))
         return "\n".join(lines) + "\n" if lines else ""
 
     def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0) -> List[str]:
