@@ -111,3 +111,6 @@ BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, Hor
 class Document:
     metadata: dict = field(default_factory=dict)
     elements: List[BlockElement] = field(default_factory=list)
+    headers: List[str] = field(default_factory=list)
+    footers: List[str] = field(default_factory=list)
+    sections: List[dict] = field(default_factory=list)

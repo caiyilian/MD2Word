@@ -17,10 +17,47 @@ class MdWriter:
 
     def write(self, document: Document) -> str:
         lines: List[str] = []
+
+        # Write metadata as YAML frontmatter
+        if document.metadata:
+            lines.append("---")
+            for key, value in document.metadata.items():
+                lines.append(f"{key}: {value}")
+            lines.append("---")
+            lines.append("")
+
+        # Write headers
+        if document.headers:
+            for i, header in enumerate(document.headers):
+                lines.append(f"<!-- Header {i + 1}: {header} -->")
+            lines.append("")
+
+        # Write elements
         for element in document.elements:
             text = self._write_block(element)
             if text:
                 lines.append(text)
+
+        # Write footers
+        if document.footers:
+            lines.append("")
+            for i, footer in enumerate(document.footers):
+                lines.append(f"<!-- Footer {i + 1}: {footer} -->")
+
+        # Write section info as HTML comments
+        if document.sections:
+            lines.append("")
+            for i, sec in enumerate(document.sections):
+                parts = []
+                if "orientation" in sec:
+                    parts.append(f"orientation={sec['orientation']}")
+                if "page_width" in sec:
+                    parts.append(f"width={sec['page_width']}")
+                if "page_height" in sec:
+                    parts.append(f"height={sec['page_height']}")
+                if parts:
+                    lines.append(f"<!-- Section {i + 1}: {', '.join(parts)} -->")
+
         return "\n".join(lines) + "\n"
 
     def _write_block(self, element: BlockElement) -> str:
