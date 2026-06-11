@@ -38,6 +38,7 @@ class Heading:
 @dataclass
 class Paragraph:
     runs: List[InlineElement] = field(default_factory=list)
+    alignment: Optional[str] = None
 
 
 @dataclass
