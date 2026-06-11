@@ -70,7 +70,14 @@ class HorizontalRule:
     pass
 
 
-BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule]
+@dataclass
+class Formula:
+    latex: str
+    display: bool = False
+    numbering: Optional[str] = None
+
+
+BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula]
 
 
 @dataclass

@@ -10,9 +10,10 @@ from docx.oxml import OxmlElement
 
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, Table, HorizontalRule, Document,
-    InlineElement, BlockElement,
+    ListBlock, ListItem, Table, HorizontalRule, Formula,
+    Document, InlineElement, BlockElement,
 )
+from md2word.renderer.formula_converter import latex_to_omml
 from md2word.utils.unit_converter import parse_size
 from md2word.renderer.styles import load_style_config, parse_color
 
@@ -90,6 +91,8 @@ class DocxRenderer:
             self._render_image(doc, element)
         elif isinstance(element, HorizontalRule):
             self._render_horizontal_rule(doc)
+        elif isinstance(element, Formula):
+            self._render_formula(doc, element)
 
     def _render_heading(self, doc: DocxDocument, heading: Heading):
         style_name = f"Heading {heading.level}"
@@ -251,6 +254,8 @@ class DocxRenderer:
                 self._add_image_to_paragraph(p, element)
             elif isinstance(element, CodeBlock):
                 self._render_code_block(doc, element)
+            elif isinstance(element, Formula):
+                self._render_formula(doc, element)
             elif isinstance(element, ListBlock):
                 self._render_list(doc, element, indent_level + 1)
 
@@ -271,10 +276,31 @@ class DocxRenderer:
 
     # ---- helpers ----
 
+    def _render_formula(self, doc: DocxDocument, formula: Formula):
+        p = doc.add_paragraph()
+        if formula.display:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        self._insert_omml(p, formula.latex)
+        if formula.numbering is not None:
+            run = p.add_run(f"  ({formula.numbering})")
+            run.font.size = Pt(self.font_size)
+            run.font.name = self.font_name
+
+    def _insert_omml(self, paragraph, latex: str):
+        omml_str = latex_to_omml(latex)
+        if omml_str is None:
+            paragraph.add_run(f"[公式解析失败: {latex}]")
+            return
+        from lxml import etree
+        omml_elem = etree.fromstring(omml_str.encode("utf-8"))
+        paragraph._p.append(omml_elem)
+
     def _apply_runs(self, paragraph, runs: List[InlineElement]):
         for run_data in runs:
             if isinstance(run_data, Image):
                 self._add_image_to_paragraph(paragraph, run_data)
+            elif isinstance(run_data, Formula):
+                self._insert_omml(paragraph, run_data.latex)
             elif isinstance(run_data, TextRun):
                 if not run_data.text:
                     continue
