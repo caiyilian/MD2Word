@@ -19,6 +19,8 @@ def build_parser():
                         help="Document font size in pt (default: 12)")
     parser.add_argument("--count-pages", action="store_true",
                         help="Count pages using Microsoft Word")
+    parser.add_argument("--style",
+                        help="Path to YAML style config file")
     return parser
 
 
@@ -36,7 +38,11 @@ def main():
             output_path = input_path + ".docx"
 
     try:
-        converter = MD2Word(font_name=args.font_name, font_size=args.font_size)
+        converter = MD2Word(
+            font_name=args.font_name,
+            font_size=args.font_size,
+            style_path=args.style,
+        )
         result = converter.convert_file(input_path, output_path,
                                         count_pages=args.count_pages)
         if args.count_pages:
