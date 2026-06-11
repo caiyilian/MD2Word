@@ -9,7 +9,7 @@ from mistune import import_plugin
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
     ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
-    Footnote, Comment,
+    Footnote, Comment, Blockquote,
     Document, InlineElement, BlockElement,
 )
 from md2word.exceptions import ParseError
@@ -342,18 +342,20 @@ class MarkdownParser:
             code = ""
         return CodeBlock(code=code.rstrip("\n"), language=language)
 
-    def _parse_block_quote(self, token: dict) -> BlockElement:
+    def _parse_block_quote(self, token: dict) -> Blockquote:
         children = token.get("children", [])
-        lines: List[str] = []
+        runs: List[InlineElement] = []
         for child in children:
             ct = child.get("type", "")
             if ct in ("paragraph", "block_text"):
-                runs = self._parse_inline(child.get("children", []))
-                text = "".join(
-                    r.text for r in runs if isinstance(r, TextRun)
-                )
-                lines.append(text)
-        return Paragraph(runs=[TextRun(text="\n".join(lines), italic=True)])
+                child_runs = self._parse_inline(child.get("children", []))
+                runs.extend(child_runs)
+            elif ct == "block_quote":
+                # Nested blockquote
+                nested = self._parse_block_quote(child)
+                nested.level += 1
+                return nested
+        return Blockquote(runs=runs, level=1)
 
     def _parse_list(self, token: dict) -> ListBlock:
         attrs = token.get("attrs", {})
@@ -527,7 +529,7 @@ class MarkdownParser:
                     font_size = None
             elif t in ("softbreak", "linebreak"):
                 runs.append(TextRun(
-                    text=" ",
+                    text="\n",
                     bold=bold, italic=italic, code=code,
                     underline=underline, strikethrough=strikethrough,
                 ))

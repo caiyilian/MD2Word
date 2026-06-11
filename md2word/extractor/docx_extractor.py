@@ -9,7 +9,7 @@ from lxml import etree
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
     ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
-    Footnote, Comment,
+    Footnote, Comment, Blockquote,
     Document, InlineElement, BlockElement,
 )
 
@@ -125,6 +125,25 @@ class DocxExtractor:
                     list_buffer = []
                     list_tight = True
                     code_buffer = []
+                    continue
+
+                # Blockquote
+                bq_level = self._is_blockquote(para)
+                if bq_level > 0:
+                    self._flush(elements, code_buffer, list_buffer, list_ordered, list_tight)
+                    list_buffer = []
+                    list_tight = True
+                    code_buffer = []
+                    runs, _ = self._extract_runs_and_images(child, doc)
+                    # Check if previous element is also a blockquote at same level
+                    if elements and isinstance(elements[-1], Blockquote) and elements[-1].level == bq_level:
+                        # Merge with previous blockquote
+                        elements[-1].runs.append(TextRun(text="\n"))
+                        elements[-1].runs.extend(runs)
+                    else:
+                        elements.append(Blockquote(runs=runs, level=bq_level))
+                    elements.extend(self._get_para_footnotes(child, footnotes))
+                    elements.extend(self._get_para_comments(child, comments))
                     continue
 
                 # Extract runs (text, hyperlinks, images) from XML
@@ -417,6 +436,36 @@ class DocxExtractor:
         except Exception:
             pass
         return False
+
+    def _is_blockquote(self, para) -> int:
+        """Check if paragraph is a blockquote. Returns blockquote level (0 if not)."""
+        try:
+            pPr = para._p.find(qn("w:pPr"))
+            if pPr is None:
+                return 0
+            # Check for left border (blockquote indicator)
+            pBdr = pPr.find(qn("w:pBdr"))
+            if pBdr is not None:
+                left = pBdr.find(qn("w:left"))
+                if left is not None and left.get(qn("w:val")) == "single":
+                    # Determine level from left indent
+                    ind = pPr.find(qn("w:ind"))
+                    if ind is not None:
+                        left_val = ind.get(qn("w:left"))
+                        if left_val:
+                            left_twips = int(left_val)
+                            level = max(1, left_twips // 720)  # 720 twips = 0.5 inch
+                            return min(level, 3)  # Max level 3
+                    return 1
+            # Check for Quote style
+            pStyle = pPr.find(qn("w:pStyle"))
+            if pStyle is not None:
+                style_val = pStyle.get(qn("w:val"))
+                if style_val and ("quote" in style_val.lower() or "blockquote" in style_val.lower()):
+                    return 1
+        except Exception:
+            pass
+        return 0
 
     # --- Images ---
     def _extract_single_image(self, drawing, doc) -> Optional[Image]:
