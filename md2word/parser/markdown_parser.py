@@ -8,8 +8,8 @@ from mistune import import_plugin
 
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, Table, HorizontalRule, Document,
-    InlineElement, BlockElement,
+    ListBlock, ListItem, Table, HorizontalRule, Formula,
+    Document, InlineElement, BlockElement,
 )
 from md2word.exceptions import ParseError
 
@@ -79,6 +79,74 @@ def _parse_span_style(raw: str) -> dict:
     return props
 
 
+_FORMULA_PLACEHOLDER_RE = re.compile(
+    r'\x00FORMULA_(INLINE|BLOCK|EQ)_(\d+)\x00'
+)
+
+
+def preprocess_formulas(text: str) -> Tuple[str, dict]:
+    formula_map: dict = {}
+    counter = [0]
+
+    def _replace_block(m):
+        idx = counter[0]
+        counter[0] += 1
+        latex = m.group(1).strip()
+        formula_map[f"BLOCK_{idx}"] = {"latex": latex, "display": True}
+        return f"\x00FORMULA_BLOCK_{idx}\x00"
+
+    def _replace_eq(m):
+        idx = counter[0]
+        counter[0] += 1
+        latex = m.group(1).strip()
+        formula_map[f"EQ_{idx}"] = {"latex": latex, "display": True, "numbering": ""}
+        return f"\x00FORMULA_EQ_{idx}\x00"
+
+    def _replace_inline(m):
+        idx = counter[0]
+        counter[0] += 1
+        latex = m.group(1).strip()
+        formula_map[f"INLINE_{idx}"] = {"latex": latex, "display": False}
+        return f"\x00FORMULA_INLINE_{idx}\x00"
+
+    def _clean_latex(content: str) -> str:
+        content = re.sub(r'\\label\{[^}]*\}', '', content)
+        return content.strip()
+
+    # Block formulas: $$...$$
+    text = re.sub(r'\$\$(.*?)\$\$', lambda m: _replace_block(
+        type("m", (), {"group": lambda self, i: m.group(i)})()
+    ), text, flags=re.DOTALL)
+
+    # Align environments: \begin{align}...\end{align} / \begin{align*}...\end{align*}
+    def _replace_align(m):
+        idx = counter[0]
+        counter[0] += 1
+        latex = _clean_latex(m.group(1))
+        formula_map[f"BLOCK_{idx}"] = {"latex": latex, "display": True}
+        return f"\n\n\x00FORMULA_BLOCK_{idx}\x00\n\n"
+    text = re.sub(
+        r'\\begin\{align\*?\}(.*?)\\end\{align\*?\}',
+        _replace_align, text, flags=re.DOTALL,
+    )
+
+    # Numbered equations: \begin{equation}...\end{equation} / \begin{equation*}...\end{equation*}
+    def _replace_eq(m):
+        idx = counter[0]
+        counter[0] += 1
+        latex = _clean_latex(m.group(1))
+        formula_map[f"EQ_{idx}"] = {"latex": latex, "display": True, "numbering": ""}
+        return f"\n\n\x00FORMULA_EQ_{idx}\x00\n\n"
+    text = re.sub(
+        r'\\begin\{equation\*?\}(.*?)\\end\{equation\*?\}',
+        _replace_eq, text, flags=re.DOTALL,
+    )
+    # Inline formulas: $...$ (must be after $$)
+    text = re.sub(r'\$(.+?)\$', _replace_inline, text)
+
+    return text, formula_map
+
+
 class MarkdownParser:
     def __init__(self):
         self.md = mistune.Markdown(
@@ -90,10 +158,12 @@ class MarkdownParser:
         )
         self._img_attrs_map: dict = {}
         self._img_index: int = 0
+        self._formula_map: dict = {}
 
     def parse(self, text: str) -> Document:
         metadata, body = parse_frontmatter(text)
         body, self._img_attrs_map = preprocess_image_attributes(body)
+        body, self._formula_map = preprocess_formulas(body)
         self._img_index = 0
         try:
             ast = self.md(body)
@@ -147,6 +217,19 @@ class MarkdownParser:
                 src=img.src, alt=img.alt,
                 width=img.width, height=img.height, align=img.align,
             )
+        # Check for standalone block formula
+        if len(runs) == 1 and isinstance(runs[0], TextRun):
+            m = _FORMULA_PLACEHOLDER_RE.match(runs[0].text)
+            if m:
+                ftype, fidx = m.group(1), m.group(2)
+                key = f"{ftype}_{fidx}"
+                info = self._formula_map.get(key)
+                if info:
+                    return Formula(
+                        latex=info["latex"],
+                        display=info["display"],
+                        numbering=info.get("numbering"),
+                    )
         return Paragraph(runs=runs)
 
     def _parse_code_block(self, token: dict) -> CodeBlock:
@@ -253,13 +336,46 @@ class MarkdownParser:
         for token in tokens:
             t = token.get("type", "")
             if t == "text":
-                runs.append(TextRun(
-                    text=token.get("raw", ""),
-                    bold=bold, italic=italic, code=code,
-                    underline=underline, strikethrough=strikethrough,
-                    superscript=superscript, subscript=subscript,
-                    font_name=font_name, font_size=font_size,
-                ))
+                raw = token.get("raw", "")
+                # Check for inline formula placeholders in text
+                if _FORMULA_PLACEHOLDER_RE.search(raw):
+                    parts = _FORMULA_PLACEHOLDER_RE.split(raw)
+                    # parts alternates: [text, type_idx, text, type_idx, ...]
+                    placeholders = list(_FORMULA_PLACEHOLDER_RE.finditer(raw))
+                    pi = 0
+                    for i, part in enumerate(parts):
+                        if pi < len(placeholders) and _FORMULA_PLACEHOLDER_RE.fullmatch(placeholders[pi].group()):
+                            # Reconstruct the full match to check alignment
+                            pass
+                    # Simpler approach: iterate through parts and placeholders
+                    text_parts = [p for i, p in enumerate(parts) if i % 3 == 0]
+                    type_parts = [p for i, p in enumerate(parts) if i % 3 == 1]
+                    idx_parts = [p for i, p in enumerate(parts) if i % 3 == 2]
+                    for i, txt in enumerate(text_parts):
+                        if txt:
+                            runs.append(TextRun(
+                                text=txt,
+                                bold=bold, italic=italic, code=code,
+                                underline=underline, strikethrough=strikethrough,
+                                superscript=superscript, subscript=subscript,
+                                font_name=font_name, font_size=font_size,
+                            ))
+                        if i < len(type_parts):
+                            key = f"{type_parts[i]}_{idx_parts[i]}"
+                            info = self._formula_map.get(key)
+                            if info:
+                                runs.append(Formula(
+                                    latex=info["latex"],
+                                    display=info["display"],
+                                ))
+                else:
+                    runs.append(TextRun(
+                        text=raw,
+                        bold=bold, italic=italic, code=code,
+                        underline=underline, strikethrough=strikethrough,
+                        superscript=superscript, subscript=subscript,
+                        font_name=font_name, font_size=font_size,
+                    ))
             elif t == "strong":
                 children = token.get("children", [])
                 runs.extend(self._parse_inline(
