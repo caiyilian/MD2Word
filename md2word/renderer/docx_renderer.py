@@ -160,19 +160,46 @@ class DocxRenderer:
                           ordered: bool, idx: int, indent_level: int):
         for element in item.elements:
             if isinstance(element, Paragraph):
-                p = doc.add_paragraph()
-                indent = Inches(0.5 + indent_level * 0.4)
-                p.paragraph_format.left_indent = indent
-                p.paragraph_format.space_before = Pt(1)
-                p.paragraph_format.space_after = Pt(1)
+                if ordered:
+                    style_name = f"List Number"
+                else:
+                    style_name = f"List Bullet"
+                if indent_level > 0:
+                    style_name += f" {indent_level + 1}"
 
-                prefix = f"{idx}. " if ordered else "\u2022 "
-                prefix_run = p.add_run(prefix)
-                prefix_run.font.name = self.font_name
-                prefix_run.font.size = Pt(self.font_size)
+                try:
+                    p = doc.add_paragraph(style=style_name)
+                except Exception:
+                    p = doc.add_paragraph()
+                    indent = Inches(0.5 + indent_level * 0.4)
+                    p.paragraph_format.left_indent = indent
+                    prefix = f"{idx}. " if ordered else "\u2022 "
+                    prefix_run = p.add_run(prefix)
+                    prefix_run.font.name = self.font_name
+                    prefix_run.font.size = Pt(self.font_size)
 
                 self._apply_runs(p, element.runs)
 
+            elif isinstance(element, Image):
+                if ordered:
+                    style_name = f"List Number"
+                else:
+                    style_name = f"List Bullet"
+                if indent_level > 0:
+                    style_name += f" {indent_level + 1}"
+
+                try:
+                    p = doc.add_paragraph(style=style_name)
+                except Exception:
+                    p = doc.add_paragraph()
+                    indent = Inches(0.5 + indent_level * 0.4)
+                    p.paragraph_format.left_indent = indent
+                    prefix = f"{idx}. " if ordered else "\u2022 "
+                    prefix_run = p.add_run(prefix)
+                    prefix_run.font.name = self.font_name
+                    prefix_run.font.size = Pt(self.font_size)
+
+                self._add_image_to_paragraph(p, element)
             elif isinstance(element, CodeBlock):
                 self._render_code_block(doc, element)
             elif isinstance(element, ListBlock):
@@ -220,11 +247,11 @@ class DocxRenderer:
             return False
 
         try:
-            page_width = paragraph.part.document.element.body.sectPr.xpath(
+            pw_twips = paragraph.part.document.element.body.sectPr.xpath(
                 "./w:pgSz/@w:w"
             )
-            if page_width:
-                pw = Emu(int(page_width[0]))
+            if pw_twips:
+                pw = Emu(int(pw_twips[0]) * 635)
             else:
                 pw = None
         except Exception:
