@@ -7,8 +7,9 @@ import mistune
 from mistune import import_plugin
 
 from md2word.model.document import (
-    TextRun, Image, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, Table, HorizontalRule, Formula,
+    TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
+    ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
+    Footnote, Comment,
     Document, InlineElement, BlockElement,
 )
 from md2word.exceptions import ParseError
@@ -81,6 +82,18 @@ def _parse_span_style(raw: str) -> dict:
 
 _FORMULA_PLACEHOLDER_RE = re.compile(
     r'\x00FORMULA_(INLINE|BLOCK|EQ)_(\d+)\x00'
+)
+
+_FOOTNOTE_DEF_RE = re.compile(
+    r'^\[\^(\w+)\]:\s*(.+)$', re.MULTILINE
+)
+
+_FOOTNOTE_REF_RE = re.compile(
+    r'\[\^(\w+)\]'
+)
+
+_PAGEBREAK_RE = re.compile(
+    r'^\\pagebreak\s*$', re.MULTILINE
 )
 
 
@@ -159,9 +172,16 @@ class MarkdownParser:
         self._img_attrs_map: dict = {}
         self._img_index: int = 0
         self._formula_map: dict = {}
+        self._footnote_defs: dict = {}
+        self._pagebreak_positions: set = set()
+        self._comment_blocks: list = []
 
     def parse(self, text: str) -> Document:
         metadata, body = parse_frontmatter(text)
+        self._comment_blocks = []
+        body = self._preprocess_pagebreaks(body)
+        body, self._footnote_defs = self._preprocess_footnote_defs(body)
+        body = self._preprocess_comments(body)
         body, self._img_attrs_map = preprocess_image_attributes(body)
         body, self._formula_map = preprocess_formulas(body)
         self._img_index = 0
@@ -170,7 +190,71 @@ class MarkdownParser:
         except Exception as e:
             raise ParseError(f"Failed to parse markdown: {e}") from e
         elements = self._parse_blocks(ast)
+
+        # Append footnote definitions as Footnote elements
+        for fn_id, fn_text in self._footnote_defs.items():
+            elements.append(Footnote(footnote_id=fn_id, text=fn_text))
+
+        # Append comment blocks
+        for cm in self._comment_blocks:
+            elements.append(Comment(
+                author=cm["author"], text=cm["text"],
+                target=cm.get("target", ""),
+            ))
+
         return Document(metadata=metadata, elements=elements)
+
+    def _preprocess_pagebreaks(self, text: str) -> str:
+        r"""Replace \pagebreak lines with placeholder paragraphs."""
+        lines = text.split("\n")
+        result = []
+        for line in lines:
+            if _PAGEBREAK_RE.match(line):
+                result.append("\x00PAGEBREAK\x00")
+            else:
+                result.append(line)
+        return "\n".join(result)
+
+    def _preprocess_footnote_defs(self, text: str) -> Tuple[str, dict]:
+        """Extract footnote definitions and remove them from body."""
+        defs = {}
+        for m in _FOOTNOTE_DEF_RE.finditer(text):
+            defs[m.group(1)] = m.group(2)
+        text = _FOOTNOTE_DEF_RE.sub("", text)
+        return text, defs
+
+    def _preprocess_comments(self, text: str) -> str:
+        """Extract HTML comments as standalone comment blocks."""
+        def _replace_comment(m):
+            content = m.group(1).strip()
+            author = ""
+            comment_text = ""
+            target_text = ""
+            if "|" in content:
+                # Format: author: text | target
+                left, target_text = content.split("|", 1)
+                target_text = target_text.strip()
+                if ":" in left:
+                    author, comment_text = left.split(":", 1)
+                    author = author.strip()
+                    comment_text = comment_text.strip()
+                else:
+                    comment_text = left.strip()
+            elif ":" in content:
+                author, comment_text = content.split(":", 1)
+                author = author.strip()
+                comment_text = comment_text.strip()
+            else:
+                comment_text = content
+
+            self._comment_blocks.append({
+                "author": author,
+                "text": comment_text,
+                "target": target_text,
+            })
+            return ""
+        text = re.sub(r'<!--\s*(.*?)\s*-->', _replace_comment, text, flags=re.DOTALL)
+        return text
 
     # ---- block parsing ----
 
@@ -211,6 +295,11 @@ class MarkdownParser:
 
     def _parse_paragraph(self, token: dict) -> BlockElement:
         runs = self._parse_inline(token.get("children", []))
+
+        # Check for pagebreak placeholder
+        if len(runs) == 1 and isinstance(runs[0], TextRun) and runs[0].text.strip() == "\x00PAGEBREAK\x00":
+            return PageBreak()
+
         if len(runs) == 1 and isinstance(runs[0], Image):
             img = runs[0]
             return Image(
@@ -218,18 +307,26 @@ class MarkdownParser:
                 width=img.width, height=img.height, align=img.align,
             )
         # Check for standalone block formula
-        if len(runs) == 1 and isinstance(runs[0], TextRun):
-            m = _FORMULA_PLACEHOLDER_RE.match(runs[0].text)
-            if m:
-                ftype, fidx = m.group(1), m.group(2)
-                key = f"{ftype}_{fidx}"
-                info = self._formula_map.get(key)
-                if info:
-                    return Formula(
-                        latex=info["latex"],
-                        display=info["display"],
-                        numbering=info.get("numbering"),
-                    )
+        if len(runs) == 1:
+            run0 = runs[0]
+            if isinstance(run0, Formula):
+                return Formula(
+                    latex=run0.latex,
+                    display=run0.display,
+                    numbering=run0.numbering,
+                )
+            if isinstance(run0, TextRun):
+                m = _FORMULA_PLACEHOLDER_RE.match(run0.text)
+                if m:
+                    ftype, fidx = m.group(1), m.group(2)
+                    key = f"{ftype}_{fidx}"
+                    info = self._formula_map.get(key)
+                    if info:
+                        return Formula(
+                            latex=info["latex"],
+                            display=info["display"],
+                            numbering=info.get("numbering"),
+                        )
         return Paragraph(runs=runs)
 
     def _parse_code_block(self, token: dict) -> CodeBlock:
@@ -450,12 +547,18 @@ class MarkdownParser:
                 )
                 runs.append(img)
             elif t == "link":
+                url = token.get("attrs", {}).get("url", "")
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(
+                inner_runs = self._parse_inline(
                     children, bold, italic, code,
                     underline, strikethrough, superscript, subscript,
                     font_name, font_size,
-                ))
+                )
+                hyper_runs = [r for r in inner_runs if isinstance(r, TextRun)]
+                if hyper_runs:
+                    runs.append(Hyperlink(url=url, runs=hyper_runs))
+                else:
+                    runs.extend(inner_runs)
             else:
                 raw = token.get("raw", "")
                 if raw:
