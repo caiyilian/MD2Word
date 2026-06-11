@@ -1,22 +1,26 @@
 from __future__ import annotations
-from typing import List
+import os
+from typing import List, Optional
 
 from docx import Document as DocxDocument
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Pt, Inches, RGBColor, Emu
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
 from md2word.model.document import (
-    TextRun, Heading, Paragraph, CodeBlock,
-    ListBlock, ListItem, HorizontalRule, Document,
-    BlockElement,
+    TextRun, Image, Heading, Paragraph, CodeBlock,
+    ListBlock, ListItem, Table, HorizontalRule, Document,
+    InlineElement, BlockElement,
 )
+from md2word.utils.unit_converter import parse_size
 
 
 class DocxRenderer:
-    def __init__(self, font_name: str = "等线", font_size: int = 12):
+    def __init__(self, font_name: str = "等线", font_size: int = 12, base_dir: str = ""):
         self.font_name = font_name
         self.font_size = font_size
+        self.base_dir = base_dir
 
     def render(self, document: Document, output_path: str):
         doc = DocxDocument()
@@ -45,6 +49,10 @@ class DocxRenderer:
             self._render_code_block(doc, element)
         elif isinstance(element, ListBlock):
             self._render_list(doc, element, indent_level=0)
+        elif isinstance(element, Table):
+            self._render_table(doc, element)
+        elif isinstance(element, Image):
+            self._render_image(doc, element)
         elif isinstance(element, HorizontalRule):
             self._render_horizontal_rule(doc)
 
@@ -63,7 +71,6 @@ class DocxRenderer:
         p.paragraph_format.space_after = Pt(4)
         p.paragraph_format.left_indent = Inches(0.3)
 
-        # Add background shading
         pPr = p._p.get_or_add_pPr()
         shading = OxmlElement("w:shd")
         shading.set(qn("w:fill"), "F2F2F2")
@@ -74,6 +81,75 @@ class DocxRenderer:
         run.font.name = "Consolas"
         run.font.size = Pt(9)
         run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    def _render_image(self, doc: DocxDocument, image: Image):
+        p = doc.add_paragraph()
+        self._apply_image_alignment(p, image.align)
+        if not self._add_image_to_paragraph(p, image):
+            run = p.add_run(f"[图片未找到: {image.src}]")
+            run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+            run.font.size = Pt(9)
+
+    def _render_table(self, doc: DocxDocument, table: Table):
+        if not table.headers and not table.rows:
+            return
+
+        num_cols = max(len(table.headers), max((len(r) for r in table.rows), default=0))
+        if num_cols == 0:
+            return
+
+        t = doc.add_table(rows=1 + len(table.rows), cols=num_cols)
+        t.style = "Table Grid"
+        t.autofit = True
+
+        # Headers
+        if table.headers:
+            for i, header in enumerate(table.headers):
+                if i >= num_cols:
+                    break
+                cell = t.cell(0, i)
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(header)
+                run.bold = True
+                run.font.name = self.font_name
+                run.font.size = Pt(self.font_size)
+                # Header shading
+                shading = OxmlElement("w:shd")
+                shading.set(qn("w:fill"), "E8E8E8")
+                shading.set(qn("w:val"), "clear")
+                cell._tc.get_or_add_tcPr().append(shading)
+
+        # Rows
+        for row_idx, row_data in enumerate(table.rows):
+            for col_idx, cell_text in enumerate(row_data):
+                if col_idx >= num_cols:
+                    break
+                cell = t.cell(1 + row_idx, col_idx)
+                cell.text = ""
+                run = cell.paragraphs[0].add_run(cell_text)
+                run.font.name = self.font_name
+                run.font.size = Pt(self.font_size)
+
+        # Column alignment
+        for i, align_val in enumerate(table.align):
+            if i >= num_cols:
+                break
+            if align_val == "left":
+                alignment = WD_ALIGN_PARAGRAPH.LEFT
+            elif align_val == "center":
+                alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif align_val == "right":
+                alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            else:
+                continue
+            # Set alignment for header
+            if table.headers:
+                t.cell(0, i).paragraphs[0].alignment = alignment
+            # Set alignment for body cells
+            for row_idx in range(len(table.rows)):
+                t.cell(1 + row_idx, i).paragraphs[0].alignment = alignment
+
+        doc.add_paragraph()  # spacing after table
 
     def _render_list(self, doc: DocxDocument, list_block: ListBlock,
                      indent_level: int = 0):
@@ -117,18 +193,63 @@ class DocxRenderer:
         pBdr.append(bottom)
         pPr.append(pBdr)
 
-    def _apply_runs(self, paragraph, runs: List[TextRun]):
-        for run_data in runs:
-            if not run_data.text:
-                continue
-            r = paragraph.add_run(run_data.text)
-            r.bold = run_data.bold
-            r.italic = run_data.italic
+    # ---- helpers ----
 
-            if run_data.code:
-                r.font.name = "Consolas"
-                r.font.size = Pt(9)
-                r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    def _apply_runs(self, paragraph, runs: List[InlineElement]):
+        for run_data in runs:
+            if isinstance(run_data, Image):
+                self._add_image_to_paragraph(paragraph, run_data)
+            elif isinstance(run_data, TextRun):
+                if not run_data.text:
+                    continue
+                r = paragraph.add_run(run_data.text)
+                r.bold = run_data.bold
+                r.italic = run_data.italic
+
+                if run_data.code:
+                    r.font.name = "Consolas"
+                    r.font.size = Pt(9)
+                    r.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                else:
+                    r.font.name = self.font_name
+                    r.font.size = Pt(self.font_size)
+
+    def _add_image_to_paragraph(self, paragraph, image: Image):
+        img_path = self._resolve_image_path(image.src)
+        if img_path is None:
+            return False
+
+        try:
+            page_width = paragraph.part.document.element.body.sectPr.xpath(
+                "./w:pgSz/@w:w"
+            )
+            if page_width:
+                pw = Emu(int(page_width[0]))
             else:
-                r.font.name = self.font_name
-                r.font.size = Pt(self.font_size)
+                pw = None
+        except Exception:
+            pw = None
+
+        width = parse_size(image.width, pw)
+        height = parse_size(image.height)
+
+        run = paragraph.add_run()
+        run.add_picture(img_path, width=width, height=height)
+        return True
+
+    def _resolve_image_path(self, src: str) -> Optional[str]:
+        if os.path.isabs(src):
+            return src if os.path.exists(src) else None
+        if self.base_dir:
+            resolved = os.path.join(self.base_dir, src)
+            if os.path.exists(resolved):
+                return resolved
+        return src if os.path.exists(src) else None
+
+    def _apply_image_alignment(self, paragraph, align: Optional[str]):
+        if align == "center":
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif align == "right":
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        elif align == "left":
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
