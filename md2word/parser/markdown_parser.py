@@ -45,11 +45,6 @@ def _parse_img_attrs(attrs_str: str) -> dict:
 
 
 def preprocess_image_attributes(text: str) -> Tuple[str, dict]:
-    """Transform ![alt](path){:attrs} into ![alt](path) and return attrs lookup.
-
-    Returns (processed_text, {image_index: attrs_dict}).
-    Index covers ALL images (with or without attrs) to stay in sync with parser.
-    """
     attrs_map: dict = {}
     counter = 0
 
@@ -63,7 +58,6 @@ def preprocess_image_attributes(text: str) -> Tuple[str, dict]:
         counter += 1
         return f"![{alt}]({src})"
 
-    # Match all ![alt](src) optionally followed by {:attrs}
     text = re.sub(
         r'!\[([^\]]*)\]\(([^)]+)\)(?:{([^}]*)})?',
         _replacer, text,
@@ -71,11 +65,28 @@ def preprocess_image_attributes(text: str) -> Tuple[str, dict]:
     return text, attrs_map
 
 
+def _parse_span_style(raw: str) -> dict:
+    props = {}
+    m = re.search(r'font-family\s*:\s*([^;"]+)', raw, re.IGNORECASE)
+    if m:
+        props["font_name"] = m.group(1).strip().strip("'\"")
+    m = re.search(r'font-size\s*:\s*(\d+(\.\d+)?)\s*pt', raw, re.IGNORECASE)
+    if m:
+        props["font_size"] = int(float(m.group(1)))
+    m = re.search(r'font-size\s*:\s*(\d+(\.\d+)?)\s*px', raw, re.IGNORECASE)
+    if m:
+        props["font_size"] = int(float(m.group(1)) * 72 / 96)
+    return props
+
+
 class MarkdownParser:
     def __init__(self):
         self.md = mistune.Markdown(
             renderer=_ASTRenderer(),
-            plugins=[import_plugin("table")],
+            plugins=[
+                import_plugin("table"),
+                import_plugin("strikethrough"),
+            ],
         )
         self._img_attrs_map: dict = {}
         self._img_index: int = 0
@@ -130,7 +141,6 @@ class MarkdownParser:
 
     def _parse_paragraph(self, token: dict) -> BlockElement:
         runs = self._parse_inline(token.get("children", []))
-        # Standalone image -> return as block-level Image for proper alignment
         if len(runs) == 1 and isinstance(runs[0], Image):
             img = runs[0]
             return Image(
@@ -197,9 +207,6 @@ class MarkdownParser:
         rows: List[List[str]] = []
         align: List[Optional[str]] = []
 
-        children = token.get("children", [])
-
-        # Extract column alignment from head cells
         def _cell_text(cell_token: dict) -> str:
             parts: List[str] = []
             for c in cell_token.get("children", []):
@@ -213,7 +220,7 @@ class MarkdownParser:
                             parts.append(cc.get("raw", ""))
             return "".join(parts)
 
-        for child in children:
+        for child in token.get("children", []):
             ct = child.get("type", "")
             if ct == "table_head":
                 for cell in child.get("children", []):
@@ -236,8 +243,11 @@ class MarkdownParser:
     # ---- inline parsing ----
 
     def _parse_inline(
-        self, tokens: list, bold: bool = False,
-        italic: bool = False, code: bool = False,
+        self, tokens: list,
+        bold: bool = False, italic: bool = False, code: bool = False,
+        underline: bool = False, strikethrough: bool = False,
+        superscript: bool = False, subscript: bool = False,
+        font_name: Optional[str] = None, font_size: Optional[int] = None,
     ) -> List[InlineElement]:
         runs: List[InlineElement] = []
         for token in tokens:
@@ -246,20 +256,68 @@ class MarkdownParser:
                 runs.append(TextRun(
                     text=token.get("raw", ""),
                     bold=bold, italic=italic, code=code,
+                    underline=underline, strikethrough=strikethrough,
+                    superscript=superscript, subscript=subscript,
+                    font_name=font_name, font_size=font_size,
                 ))
             elif t == "strong":
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(children, True, italic, code))
+                runs.extend(self._parse_inline(
+                    children, True, italic, code,
+                    underline, strikethrough, superscript, subscript,
+                    font_name, font_size,
+                ))
             elif t == "emphasis":
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(children, bold, True, code))
+                runs.extend(self._parse_inline(
+                    children, bold, True, code,
+                    underline, strikethrough, superscript, subscript,
+                    font_name, font_size,
+                ))
             elif t == "codespan":
                 runs.append(TextRun(
                     text=token.get("raw", ""),
                     bold=bold, italic=italic, code=True,
+                    font_name=font_name, font_size=font_size,
                 ))
+            elif t == "strikethrough":
+                children = token.get("children", [])
+                runs.extend(self._parse_inline(
+                    children, bold, italic, code,
+                    underline, True, superscript, subscript,
+                    font_name, font_size,
+                ))
+            elif t == "inline_html":
+                raw = token.get("raw", "")
+                if raw == "<u>" or raw == "<ins>":
+                    underline = True
+                elif raw == "</u>" or raw == "</ins>":
+                    underline = False
+                elif raw in ("<s>", "<strike>", "<del>"):
+                    strikethrough = True
+                elif raw in ("</s>", "</strike>", "</del>"):
+                    strikethrough = False
+                elif raw == "<sup>":
+                    superscript = True
+                elif raw == "</sup>":
+                    superscript = False
+                elif raw == "<sub>":
+                    subscript = True
+                elif raw == "</sub>":
+                    subscript = False
+                elif raw.startswith("<span"):
+                    span_props = _parse_span_style(raw)
+                    font_name = span_props.get("font_name", font_name)
+                    font_size = span_props.get("font_size", font_size)
+                elif raw == "</span>":
+                    font_name = None
+                    font_size = None
             elif t in ("softbreak", "linebreak"):
-                runs.append(TextRun(text=" ", bold=bold, italic=italic, code=code))
+                runs.append(TextRun(
+                    text=" ",
+                    bold=bold, italic=italic, code=code,
+                    underline=underline, strikethrough=strikethrough,
+                ))
             elif t == "image":
                 src = token.get("attrs", {}).get("url", "")
                 alt = ""
@@ -269,8 +327,7 @@ class MarkdownParser:
                 extra = self._img_attrs_map.get(self._img_index, {})
                 self._img_index += 1
                 img = Image(
-                    src=src,
-                    alt=alt,
+                    src=src, alt=alt,
                     width=extra.get("width"),
                     height=extra.get("height"),
                     align=extra.get("align"),
@@ -278,11 +335,13 @@ class MarkdownParser:
                 runs.append(img)
             elif t == "link":
                 children = token.get("children", [])
-                runs.extend(self._parse_inline(children, bold, italic, code))
+                runs.extend(self._parse_inline(
+                    children, bold, italic, code,
+                    underline, strikethrough, superscript, subscript,
+                    font_name, font_size,
+                ))
             else:
                 raw = token.get("raw", "")
                 if raw:
-                    runs.append(TextRun(
-                        text=raw, bold=bold, italic=italic, code=code,
-                    ))
+                    runs.append(TextRun(text=raw, bold=bold, italic=italic, code=code))
         return runs
