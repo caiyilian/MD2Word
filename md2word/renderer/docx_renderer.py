@@ -11,7 +11,7 @@ from docx.oxml import OxmlElement
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
     ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
-    Footnote, Comment,
+    Footnote, Comment, Blockquote,
     Document, InlineElement, BlockElement,
 )
 from md2word.renderer.formula_converter import latex_to_omml
@@ -116,6 +116,8 @@ class DocxRenderer:
             self._render_formula(doc, element)
         elif isinstance(element, PageBreak):
             self._render_page_break(doc)
+        elif isinstance(element, Blockquote):
+            self._render_blockquote(doc, element)
         # Footnote and Comment are handled in render() post-processing
 
     def _render_heading(self, doc: DocxDocument, heading: Heading):
@@ -297,6 +299,48 @@ class DocxRenderer:
         bottom.set(qn("w:color"), "999999")
         pBdr.append(bottom)
         pPr.append(pBdr)
+
+    def _render_blockquote(self, doc: DocxDocument, blockquote: Blockquote):
+        # Build text from runs
+        text_parts = []
+        for run in blockquote.runs:
+            if isinstance(run, TextRun):
+                text_parts.append(run.text)
+            elif isinstance(run, Hyperlink):
+                text_parts.append(run.url)
+        text = "".join(text_parts)
+
+        lines = text.split("\n")
+
+        for i, line in enumerate(lines):
+            if not line.strip() and i > 0:
+                continue  # Skip empty lines between blockquote lines
+            p = doc.add_paragraph()
+            p.paragraph_format.left_indent = Inches(0.5 * blockquote.level)
+            p.paragraph_format.space_before = Pt(2)
+            p.paragraph_format.space_after = Pt(2)
+
+            # Add left border (blue-gray color)
+            pPr = p._p.get_or_add_pPr()
+            pBdr = OxmlElement("w:pBdr")
+            left = OxmlElement("w:left")
+            left.set(qn("w:val"), "single")
+            left.set(qn("w:sz"), "12")
+            left.set(qn("w:space"), "4")
+            left.set(qn("w:color"), "4472C4")
+            pBdr.append(left)
+            pPr.append(pBdr)
+
+            # Add shading (light gray background)
+            shading = OxmlElement("w:shd")
+            shading.set(qn("w:fill"), "F2F2F2")
+            shading.set(qn("w:val"), "clear")
+            pPr.append(shading)
+
+            # Add the text
+            run = p.add_run(line.strip())
+            run.font.name = self.font_name
+            run.font.size = Pt(self.font_size)
 
     # ---- helpers ----
 
