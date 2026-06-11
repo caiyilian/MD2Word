@@ -79,6 +79,16 @@ class DocxExtractor:
         list_tight: bool = True
         code_buffer: List[str] = []
 
+        # Extract metadata
+        metadata = self._extract_metadata(doc)
+
+        # Extract headers and footers
+        headers = self._extract_headers(doc)
+        footers = self._extract_footers(doc)
+
+        # Extract section properties
+        sections = self._extract_sections(doc)
+
         footnotes = self._load_footnotes(doc)
         comments = self._load_comments(doc)
 
@@ -183,7 +193,8 @@ class DocxExtractor:
                     elements.append(table_elem)
 
         self._flush(elements, code_buffer, list_buffer, list_ordered, list_tight)
-        return Document(elements=elements)
+        return Document(metadata=metadata, elements=elements,
+                       headers=headers, footers=footers, sections=sections)
 
     def _flush(self, elements, code_buffer, list_buffer, list_ordered, list_tight):
         self._flush_code_buffer(elements, code_buffer)
@@ -708,3 +719,90 @@ class DocxExtractor:
         except Exception:
             pass
         return results
+
+    # --- Metadata, Headers, Footers, Sections ---
+
+    def _extract_metadata(self, doc: DocxDocument) -> dict:
+        """Extract document metadata (title, author, created, modified)."""
+        metadata = {}
+        props = doc.core_properties
+        if props.title:
+            metadata["title"] = props.title
+        if props.author:
+            metadata["author"] = props.author
+        if props.created:
+            metadata["created"] = props.created.isoformat()
+        if props.modified:
+            metadata["modified"] = props.modified.isoformat()
+        if props.subject:
+            metadata["subject"] = props.subject
+        if props.keywords:
+            metadata["keywords"] = props.keywords
+        return metadata
+
+    def _extract_headers(self, doc: DocxDocument) -> List[str]:
+        """Extract header text from all sections."""
+        headers = []
+        try:
+            for section in doc.sections:
+                header = section.header
+                if header and not header.is_linked_to_previous:
+                    texts = []
+                    for para in header.paragraphs:
+                        text = para.text.strip()
+                        if text:
+                            texts.append(text)
+                    if texts:
+                        headers.append("\n".join(texts))
+        except Exception:
+            pass
+        return headers
+
+    def _extract_footers(self, doc: DocxDocument) -> List[str]:
+        """Extract footer text from all sections."""
+        footers = []
+        try:
+            for section in doc.sections:
+                footer = section.footer
+                if footer and not footer.is_linked_to_previous:
+                    texts = []
+                    for para in footer.paragraphs:
+                        text = para.text.strip()
+                        if text:
+                            texts.append(text)
+                    if texts:
+                        footers.append("\n".join(texts))
+        except Exception:
+            pass
+        return footers
+
+    def _extract_sections(self, doc: DocxDocument) -> List[dict]:
+        """Extract section properties (page size, margins, orientation)."""
+        sections = []
+        try:
+            for section in doc.sections:
+                sec_info = {}
+                # Page size
+                if section.page_width:
+                    sec_info["page_width"] = f"{section.page_width / 914400:.2f}in"
+                if section.page_height:
+                    sec_info["page_height"] = f"{section.page_height / 914400:.2f}in"
+                # Margins
+                if section.top_margin:
+                    sec_info["top_margin"] = f"{section.top_margin / 914400:.2f}in"
+                if section.bottom_margin:
+                    sec_info["bottom_margin"] = f"{section.bottom_margin / 914400:.2f}in"
+                if section.left_margin:
+                    sec_info["left_margin"] = f"{section.left_margin / 914400:.2f}in"
+                if section.right_margin:
+                    sec_info["right_margin"] = f"{section.right_margin / 914400:.2f}in"
+                # Orientation
+                from docx.enum.section import WD_ORIENT
+                if section.orientation == WD_ORIENT.LANDSCAPE:
+                    sec_info["orientation"] = "landscape"
+                else:
+                    sec_info["orientation"] = "portrait"
+                sections.append(sec_info)
+        except Exception:
+            pass
+        return sections
