@@ -1,9 +1,11 @@
 from __future__ import annotations
 import os
+from typing import Optional
 
 from md2word.model.document import Document
 from md2word.parser.markdown_parser import MarkdownParser
 from md2word.renderer.docx_renderer import DocxRenderer
+from md2word.renderer.styles import load_style_config
 from md2word.counter.win32_counter import Win32PageCounter
 
 
@@ -14,12 +16,18 @@ class ConversionResult:
 
 
 class MD2Word:
-    def __init__(self, font_name: str = "等线", font_size: int = 12, base_dir: str = ""):
+    def __init__(self, font_name: str = "等线", font_size: int = 12,
+                 base_dir: str = "", style_path: Optional[str] = None):
+        style_config = None
+        if style_path:
+            style_config = load_style_config(style_path)
+
         self.parser = MarkdownParser()
         self.renderer = DocxRenderer(
             font_name=font_name,
             font_size=font_size,
             base_dir=base_dir,
+            style_config=style_config,
         )
         self.counter = Win32PageCounter()
 
