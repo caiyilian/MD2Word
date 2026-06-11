@@ -1,0 +1,35 @@
+body:
+  font: "等线"
+  size: 12
+  color: "333333"
+  spacing: 1.15
+
+headings:
+  h1:
+    size: 22
+    bold: true
+    color: "1F3864"
+  h2:
+    size: 18
+    bold: true
+    color: "2F5496"
+  h3:
+    size: 15
+    bold: true
+    color: "2F5496"
+
+code:
+  font: "Consolas"
+  size: 9
+  color: "333333"
+  bg_color: "F5F5F5"
+
+table:
+  header_bg: "E8E8E8"
+  border: true
+
+page:
+  margin_top: 2.54
+  margin_bottom: 2.54
+  margin_left: 3.18
+  margin_right: 3.18
