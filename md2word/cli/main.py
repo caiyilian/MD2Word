@@ -13,8 +13,12 @@ def build_parser():
     )
     parser.add_argument("input", help="Path to input Markdown file (.md)")
     parser.add_argument("-o", "--output", help="Path to output Word file (.docx)")
-    parser.add_argument("--font-name", default="等线", help="Document font name (default: 等线)")
-    parser.add_argument("--font-size", type=int, default=12, help="Document font size in pt (default: 12)")
+    parser.add_argument("--font-name", default="等线",
+                        help="Document font name (default: 等线)")
+    parser.add_argument("--font-size", type=int, default=12,
+                        help="Document font size in pt (default: 12)")
+    parser.add_argument("--count-pages", action="store_true",
+                        help="Count pages using Microsoft Word")
     return parser
 
 
@@ -33,8 +37,13 @@ def main():
 
     try:
         converter = MD2Word(font_name=args.font_name, font_size=args.font_size)
-        result = converter.convert_file(input_path, output_path)
-        print(f"Converted: {input_path} -> {result.path}")
+        result = converter.convert_file(input_path, output_path,
+                                        count_pages=args.count_pages)
+        if args.count_pages:
+            print(f"Converted: {input_path} -> {result.path}")
+            print(f"Pages: {result.pages}")
+        else:
+            print(f"Converted: {input_path} -> {result.path}")
     except FileNotFoundError as e:
         print(f"Error: File not found - {e}", file=sys.stderr)
         sys.exit(1)
@@ -42,7 +51,7 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
