@@ -24,9 +24,16 @@ class Image:
     width: Optional[str] = None
     height: Optional[str] = None
     align: Optional[str] = None
+    ocr_text: Optional[str] = None
 
 
-InlineElement = Union[TextRun, Image]
+@dataclass
+class Hyperlink:
+    url: str
+    runs: List[TextRun] = field(default_factory=list)
+
+
+InlineElement = Union[TextRun, Image, Hyperlink]
 
 
 @dataclass
@@ -78,7 +85,26 @@ class Formula:
     numbering: Optional[str] = None
 
 
-BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula]
+@dataclass
+class PageBreak:
+    pass
+
+
+@dataclass
+class Footnote:
+    footnote_id: str
+    text: str
+
+
+@dataclass
+class Comment:
+    author: str
+    text: str
+    date: Optional[str] = None
+    target: Optional[str] = None
+
+
+BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula, PageBreak, Footnote, Comment]
 
 
 @dataclass
