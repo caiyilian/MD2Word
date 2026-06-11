@@ -26,6 +26,8 @@ def build_parser():
                         help="Path to YAML style config file")
     parser.add_argument("--reverse", "-r", action="store_true",
                         help="Reverse mode: convert .docx to .md")
+    parser.add_argument("--ocr", action="store_true",
+                        help="Run OCR on images and extract text to md")
     return parser
 
 
@@ -57,9 +59,10 @@ def _do_reverse(args):
     input_base = os.path.splitext(os.path.basename(input_path))[0]
     output_target = args.output
 
-    # Determine subfolder name inside output/
-    if output_target is None or output_target.lower().endswith(".md"):
-        subfolder = os.path.splitext(os.path.basename(output_target))[0] if output_target else input_base
+    if output_target is None:
+        subfolder = input_base
+    elif output_target.lower().endswith(".md"):
+        subfolder = os.path.splitext(os.path.basename(output_target))[0]
     else:
         subfolder = os.path.basename(output_target)
 
@@ -70,7 +73,7 @@ def _do_reverse(args):
     md_filename = subfolder + ".md"
     md_path = os.path.join(output_dir, md_filename)
 
-    extractor = DocxExtractor(output_dir=images_dir)
+    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr)
     doc = extractor.extract(input_path)
     writer = MdWriter(default_font_name=args.font_name,
                       default_font_size=args.font_size)
