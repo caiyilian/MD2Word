@@ -54,7 +54,8 @@ def _qname(tag: str, ns: str = _NS_W) -> str:
 
 
 class DocxExtractor:
-    def __init__(self, output_dir: str = "", ocr: bool = False, max_ocr_images: int = 0):
+    def __init__(self, output_dir: str = "", ocr: bool = False, max_ocr_images: int = 0,
+                 style_mappings: Optional[Dict[str, str]] = None):
         self.output_dir = output_dir
         self._img_counter: int = 0
         self._saved_images: Set[str] = set()
@@ -62,6 +63,8 @@ class DocxExtractor:
         self._ocr_engine = None
         self._ocr_count = 0
         self._max_ocr_images = max_ocr_images
+        self._style_mappings = style_mappings or {}
+        self._numbering_cache: Dict[int, dict] = {}
         if ocr:
             try:
                 from paddleocr import PaddleOCR
@@ -77,6 +80,7 @@ class DocxExtractor:
         list_buffer: List[ListItem] = []
         list_ordered: bool = False
         list_tight: bool = True
+        list_level: int = 0
         code_buffer: List[str] = []
 
         # Extract metadata
@@ -88,6 +92,9 @@ class DocxExtractor:
 
         # Extract section properties
         sections = self._extract_sections(doc)
+
+        # Load numbering definitions
+        self._load_numbering(doc)
 
         footnotes = self._load_footnotes(doc)
         comments = self._load_comments(doc)
@@ -178,18 +185,21 @@ class DocxExtractor:
                 if not runs and para_images:
                     runs = para_images
 
-                element = self._extract_paragraph_element(para, runs)
+                element = self._extract_paragraph_element(para, runs, child)
 
                 if isinstance(element, ListBlock):
                     items = element.items
                     if items:
-                        if list_buffer and list_ordered == element.ordered:
+                        if list_buffer and list_ordered == element.ordered and list_level == element.level:
+                            # Same level, merge items
                             list_buffer.extend(items)
                         else:
-                            self._flush_list_buffer(elements, list_buffer, list_ordered, list_tight)
+                            # Different level or type, flush and start new
+                            self._flush_list_buffer(elements, list_buffer, list_ordered, list_tight, list_level)
                             list_buffer = list(items)
                             list_ordered = element.ordered
                             list_tight = element.tight
+                            list_level = element.level
                     continue
 
                 self._flush_list_buffer(elements, list_buffer, list_ordered, list_tight)
@@ -223,9 +233,9 @@ class DocxExtractor:
         if code_buffer:
             elements.append(CodeBlock(code="\n".join(code_buffer)))
 
-    def _flush_list_buffer(self, elements, buffer, ordered, tight):
+    def _flush_list_buffer(self, elements, buffer, ordered, tight, level=0):
         if buffer:
-            elements.append(ListBlock(ordered=ordered, items=buffer, tight=tight))
+            elements.append(ListBlock(ordered=ordered, items=buffer, tight=tight, level=level))
 
     def _find_paragraph_in_doc(self, doc: DocxDocument, xml_elem):
         for para in doc.paragraphs:
@@ -242,8 +252,14 @@ class DocxExtractor:
             pass
         return False
 
-    def _extract_paragraph_element(self, para, runs) -> Optional[BlockElement]:
+    def _extract_paragraph_element(self, para, runs, p_elem=None) -> Optional[BlockElement]:
         style_name = para.style.name if para.style else ""
+
+        # Check for custom style mapping
+        if style_name in self._style_mappings:
+            mapping = self._style_mappings[style_name]
+            # Return as special paragraph with style info
+            return Paragraph(runs=runs, alignment=None)
 
         if style_name.startswith("Heading"):
             try:
@@ -252,21 +268,56 @@ class DocxExtractor:
                 level = 1
             return Heading(level=level, runs=runs)
 
-        if style_name in ("List Bullet", "List Number") or \
-           style_name.startswith("List Bullet ") or \
-           style_name.startswith("List Number "):
-            ordered = "Number" in style_name
+        # Detect list style with nesting level
+        if style_name.startswith("List Bullet"):
+            ordered = False
+            # Extract level from style name: "List Bullet" = 0, "List Bullet 2" = 1, etc.
+            level = 0
+            if style_name != "List Bullet":
+                try:
+                    level = int(style_name.split()[-1]) - 1
+                except (ValueError, IndexError):
+                    level = 0
             item = ListItem(elements=[Paragraph(runs=runs)])
             tight = not para.paragraph_format.space_before \
                     and not para.paragraph_format.space_after
-            return ListBlock(ordered=ordered, items=[item], tight=tight)
+            return ListBlock(ordered=ordered, items=[item], tight=tight, level=level)
 
-        numPr = para._p.find(qn("w:pPr"))
-        if numPr is not None:
-            numPr = numPr.find(qn("w:numPr"))
-        if numPr is not None:
+        if style_name.startswith("List Number"):
+            ordered = True
+            # Extract level from style name
+            level = 0
+            if style_name != "List Number":
+                try:
+                    level = int(style_name.split()[-1]) - 1
+                except (ValueError, IndexError):
+                    level = 0
             item = ListItem(elements=[Paragraph(runs=runs)])
-            return ListBlock(ordered=True, items=[item], tight=True)
+            tight = not para.paragraph_format.space_before \
+                    and not para.paragraph_format.space_after
+            return ListBlock(ordered=ordered, items=[item], tight=tight, level=level)
+
+        # Check for numPr with ilvl
+        if p_elem is not None:
+            pPr = p_elem.find(_qname("pPr"))
+            if pPr is not None:
+                numPr = pPr.find(_qname("numPr"))
+                if numPr is not None:
+                    ilvl_elem = numPr.find(_qname("ilvl"))
+                    numId_elem = numPr.find(_qname("numId"))
+                    ilvl = int(ilvl_elem.get(_qname("val"))) if ilvl_elem is not None else 0
+                    numId = int(numId_elem.get(_qname("val"))) if numId_elem is not None else 0
+
+                    # Determine if ordered based on numbering format
+                    ordered = True
+                    if numId in self._numbering_cache:
+                        num_info = self._numbering_cache[numId]
+                        fmt = num_info.get("fmt", "decimal")
+                        ordered = fmt != "bullet"
+
+                    item = ListItem(elements=[Paragraph(runs=runs)])
+                    return ListBlock(ordered=ordered, items=[item], tight=True,
+                                    level=ilvl)
 
         alignment = _alignment_to_str(para.alignment)
         return Paragraph(runs=runs, alignment=alignment)
@@ -855,3 +906,42 @@ class DocxExtractor:
         except Exception:
             pass
         return sections
+
+    def _load_numbering(self, doc: DocxDocument):
+        """Load numbering definitions from word/numbering.xml."""
+        try:
+            numbering_part = doc.part.numbering_part
+            if numbering_part is None:
+                return
+            tree = etree.fromstring(numbering_part.blob)
+            ns_w = _NS_W
+
+            # Build abstract num lookup
+            abstract_nums = {}
+            for abstract in tree.findall(f".//{{{ns_w}}}abstractNum"):
+                abstract_id = int(abstract.get(f"{{{ns_w}}}abstractNumId"))
+                levels = {}
+                for lvl in abstract.findall(f"{{{ns_w}}}lvl"):
+                    ilvl = int(lvl.get(f"{{{ns_w}}}ilvl"))
+                    num_fmt = lvl.find(f"{{{ns_w}}}numFmt")
+                    fmt = num_fmt.get(f"{{{ns_w}}}val") if num_fmt is not None else "decimal"
+                    levels[ilvl] = fmt
+                abstract_nums[abstract_id] = levels
+
+            # Map numId to abstract num
+            for num in tree.findall(f".//{{{ns_w}}}num"):
+                num_id = int(num.get(f"{{{ns_w}}}numId"))
+                abstract_ref = num.find(f"{{{ns_w}}}abstractNumId")
+                if abstract_ref is not None:
+                    abstract_id = int(abstract_ref.get(f"{{{ns_w}}}val"))
+                    if abstract_id in abstract_nums:
+                        levels = abstract_nums[abstract_id]
+                        # Get format for level 0 (or first available)
+                        fmt = levels.get(0, "decimal")
+                        self._numbering_cache[num_id] = {
+                            "abstract_id": abstract_id,
+                            "levels": levels,
+                            "fmt": fmt,
+                        }
+        except Exception:
+            pass
