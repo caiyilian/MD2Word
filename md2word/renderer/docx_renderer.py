@@ -14,16 +14,20 @@ from md2word.model.document import (
     InlineElement, BlockElement,
 )
 from md2word.utils.unit_converter import parse_size
+from md2word.renderer.styles import load_style_config, parse_color
 
 
 class DocxRenderer:
-    def __init__(self, font_name: str = "等线", font_size: int = 12, base_dir: str = ""):
+    def __init__(self, font_name: str = "等线", font_size: int = 12,
+                 base_dir: str = "", style_config: Optional[dict] = None):
         self.font_name = font_name
         self.font_size = font_size
         self.base_dir = base_dir
+        self.style = style_config or {}
 
     def render(self, document: Document, output_path: str):
         doc = DocxDocument()
+        self._apply_style_config(doc)
         self._set_default_style(doc)
 
         for element in document.elements:
@@ -39,6 +43,37 @@ class DocxRenderer:
         font.size = Pt(self.font_size)
         style.paragraph_format.space_after = Pt(6)
         style.paragraph_format.line_spacing = 1.15
+
+    def _apply_style_config(self, doc: DocxDocument):
+        if not self.style:
+            return
+
+        # Body font
+        body_cfg = self.style.get("body", {})
+        if body_cfg.get("font"):
+            self.font_name = body_cfg["font"]
+        if body_cfg.get("size"):
+            self.font_size = body_cfg["size"]
+
+        ns = doc.styles["Normal"]
+        ns.font.name = self.font_name
+        ns.font.size = Pt(self.font_size)
+        color = parse_color(body_cfg.get("color"))
+        if color:
+            ns.font.color.rgb = color
+        if body_cfg.get("spacing"):
+            ns.paragraph_format.line_spacing = body_cfg["spacing"]
+
+        # Page margins
+        page_cfg = self.style.get("page", {})
+        sections = doc.sections
+        if sections:
+            sec = sections[0]
+            for attr, key in [("top", "margin_top"), ("bottom", "margin_bottom"),
+                              ("left", "margin_left"), ("right", "margin_right")]:
+                val = page_cfg.get(key)
+                if val is not None:
+                    setattr(sec, attr, Inches(val))
 
     def _render_element(self, doc: DocxDocument, element: BlockElement):
         if isinstance(element, Heading):
@@ -59,6 +94,13 @@ class DocxRenderer:
     def _render_heading(self, doc: DocxDocument, heading: Heading):
         style_name = f"Heading {heading.level}"
         p = doc.add_paragraph(style=style_name)
+        # Apply heading color from style config
+        h_key = f"h{heading.level}"
+        h_cfg = self.style.get("headings", {}).get(h_key, {})
+        h_color = parse_color(h_cfg.get("color"))
+        if h_color:
+            for run in p.runs:
+                run.font.color.rgb = h_color
         self._apply_runs(p, heading.runs)
 
     def _render_paragraph(self, doc: DocxDocument, paragraph: Paragraph):
@@ -66,21 +108,28 @@ class DocxRenderer:
         self._apply_runs(p, paragraph.runs)
 
     def _render_code_block(self, doc: DocxDocument, code_block: CodeBlock):
+        code_cfg = self.style.get("code", {})
+
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(4)
         p.paragraph_format.space_after = Pt(4)
         p.paragraph_format.left_indent = Inches(0.3)
 
+        bg = code_cfg.get("bg_color", "F2F2F2")
         pPr = p._p.get_or_add_pPr()
         shading = OxmlElement("w:shd")
-        shading.set(qn("w:fill"), "F2F2F2")
+        shading.set(qn("w:fill"), bg)
         shading.set(qn("w:val"), "clear")
         pPr.append(shading)
 
         run = p.add_run(code_block.code)
-        run.font.name = "Consolas"
-        run.font.size = Pt(9)
-        run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+        run.font.name = code_cfg.get("font", "Consolas")
+        run.font.size = Pt(code_cfg.get("size", 9))
+        color = parse_color(code_cfg.get("color", "333333"))
+        if color:
+            run.font.color.rgb = color
+        else:
+            run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
     def _render_image(self, doc: DocxDocument, image: Image):
         p = doc.add_paragraph()
