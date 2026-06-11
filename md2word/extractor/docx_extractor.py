@@ -319,6 +319,26 @@ class DocxExtractor:
                     return ListBlock(ordered=ordered, items=[item], tight=True,
                                     level=ilvl)
 
+                # Check for indentation-based list detection
+                ind = pPr.find(_qname("ind"))
+                if ind is not None:
+                    left_val = ind.get(_qname("left"))
+                    if left_val:
+                        left_twips = int(left_val)
+                        # Calculate level based on indentation (720 twips = 0.5 inch = 1 level)
+                        level = max(0, (left_twips - 720) // 720) if left_twips > 720 else 0
+                        # Check if text starts with bullet or number pattern
+                        flat_text = "".join(r.text for r in runs if isinstance(r, TextRun))
+                        if flat_text and level > 0:
+                            # Detect bullet or number pattern
+                            is_bullet = flat_text.startswith(("•", "◦", "▪", "-", "–"))
+                            import re
+                            is_number = bool(re.match(r'^\d+\.?\s', flat_text))
+                            if is_bullet or is_number:
+                                item = ListItem(elements=[Paragraph(runs=runs)])
+                                return ListBlock(ordered=is_number, items=[item], tight=True,
+                                                level=level)
+
         alignment = _alignment_to_str(para.alignment)
         return Paragraph(runs=runs, alignment=alignment)
 
