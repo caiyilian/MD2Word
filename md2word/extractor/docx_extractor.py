@@ -1010,7 +1010,25 @@ class DocxExtractor:
         if bookmarks:
             metadata["bookmarks"] = bookmarks
 
+        # Detect RTL
+        if self._detect_rtl(doc):
+            metadata["rtl"] = True
+
         return metadata
+
+    def _detect_rtl(self, doc: DocxDocument) -> bool:
+        """Detect if document has Right-to-Left text direction."""
+        try:
+            for section in doc.sections:
+                sectPr = section._sectPr
+                pPr = sectPr.find(qn("w:pPr"))
+                if pPr is not None:
+                    bidi = pPr.find(qn("w:bidi"))
+                    if bidi is not None:
+                        return True
+        except Exception:
+            pass
+        return False
 
     def _extract_headers(self, doc: DocxDocument) -> List[str]:
         """Extract header text from all sections."""
