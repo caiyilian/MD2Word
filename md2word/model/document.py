@@ -66,6 +66,7 @@ class ListBlock:
     items: List[ListItem] = field(default_factory=list)
     tight: bool = True
     level: int = 0
+    numbering_prefix: str = ""  # Custom numbering prefix (e.g., "1.1.2")
 
 
 @dataclass
