@@ -68,6 +68,15 @@ class DocxRenderer:
         if document.metadata.get("bookmarks"):
             self._insert_bookmarks(doc)
 
+        # Apply RTL if requested
+        if document.metadata.get("rtl"):
+            self._apply_rtl(doc)
+
+        # Apply watermark if requested
+        watermark = document.metadata.get("watermark")
+        if watermark:
+            self._apply_watermark(doc, watermark)
+
         doc.save(output_path)
         return output_path
 
@@ -951,6 +960,60 @@ class DocxRenderer:
                 bookmark_end = OxmlElement("w:bookmarkEnd")
                 bookmark_end.set(qn("w:id"), str(i))
                 para._p.append(bookmark_end)
+
+    def _apply_rtl(self, doc: DocxDocument):
+        """Apply Right-to-Left text direction to the document."""
+        for section in doc.sections:
+            sectPr = section._sectPr
+            # Set RTL
+            bidi = OxmlElement("w:bidi")
+            pPr = sectPr.find(qn("w:pPr"))
+            if pPr is None:
+                pPr = OxmlElement("w:pPr")
+                sectPr.insert(0, pPr)
+            pPr.append(bidi)
+
+            # Set RTL for all paragraphs
+            for para in doc.paragraphs:
+                pPr = para._p.get_or_add_pPr()
+                bidi = OxmlElement("w:bidi")
+                pPr.append(bidi)
+
+    def _apply_watermark(self, doc: DocxDocument, watermark_text: str):
+        """Apply a text watermark to the document."""
+        for section in doc.sections:
+            sectPr = section._sectPr
+
+            # Create header for watermark
+            header = section.header
+            header.is_linked_to_previous = False
+            p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            # Create text watermark using simple approach
+            r = OxmlElement("w:r")
+            rPr = OxmlElement("w:rPr")
+
+            # Set font properties for watermark
+            rFonts = OxmlElement("w:rFonts")
+            rFonts.set(qn("w:ascii"), "Arial")
+            rFonts.set(qn("w:hAnsi"), "Arial")
+            rPr.append(rFonts)
+
+            sz = OxmlElement("w:sz")
+            sz.set(qn("w:val"), "72")  # 36pt
+            rPr.append(sz)
+
+            color = OxmlElement("w:color")
+            color.set(qn("w:val"), "C0C0C0")  # Light gray
+            rPr.append(color)
+
+            # Add watermark as text (simplified approach)
+            t = OxmlElement("w:t")
+            t.text = f"  {watermark_text}  "
+            r.append(rPr)
+            r.append(t)
+            p._p.append(r)
 
     def _render_page_break(self, doc: DocxDocument):
         p = doc.add_paragraph()
