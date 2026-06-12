@@ -278,7 +278,22 @@ class DocxExtractor:
                     level = int(style_name.split()[-1]) - 1
                 except (ValueError, IndexError):
                     level = 0
-            item = ListItem(elements=[Paragraph(runs=runs)])
+            # Check for task list checkboxes in text
+            checked = None
+            flat_text = "".join(r.text for r in runs if isinstance(r, TextRun))
+            if flat_text.startswith("\u2610 ") or flat_text.startswith("[ ] "):  # ☐ or [ ]
+                checked = False
+            elif flat_text.startswith("\u2611 ") or flat_text.startswith("[x] ") or flat_text.startswith("[X] "):  # ☑ or [x]
+                checked = True
+            # Remove checkbox prefix from text runs
+            if checked is not None:
+                for r in runs:
+                    if isinstance(r, TextRun):
+                        if r.text.startswith("\u2610 ") or r.text.startswith("[ ] "):
+                            r.text = r.text[2:] if r.text.startswith("\u2610 ") else r.text[4:]
+                        elif r.text.startswith("\u2611 ") or r.text.startswith("[x] ") or r.text.startswith("[X] "):
+                            r.text = r.text[2:] if r.text.startswith("\u2611 ") else r.text[4:]
+            item = ListItem(elements=[Paragraph(runs=runs)], checked=checked)
             tight = not para.paragraph_format.space_before \
                     and not para.paragraph_format.space_after
             return ListBlock(ordered=ordered, items=[item], tight=tight, level=level)
