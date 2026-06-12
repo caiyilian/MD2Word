@@ -28,6 +28,8 @@ def build_parser():
                         help="Reverse mode: convert .docx to .md")
     parser.add_argument("--ocr", action="store_true",
                         help="Run OCR on images and extract text to md")
+    parser.add_argument("--ocr-engine", choices=["glm-ocr", "paddleocr"],
+                        default="glm-ocr", help="OCR engine to use (default: glm-ocr)")
     return parser
 
 
@@ -40,6 +42,8 @@ def build_docx2md_parser():
     parser.add_argument("-o", "--output", help="Path to output .md file")
     parser.add_argument("--ocr", action="store_true",
                         help="Run OCR on images and extract text to md")
+    parser.add_argument("--ocr-engine", choices=["glm-ocr", "paddleocr"],
+                        default="glm-ocr", help="OCR engine to use (default: glm-ocr)")
     parser.add_argument("--font-name", default="\u7b49\u7ebf",
                         help="Document font name (default: \u7b49\u7ebf)")
     parser.add_argument("--font-size", type=int, default=12,
@@ -89,7 +93,7 @@ def _do_reverse(args):
     md_filename = subfolder + ".md"
     md_path = os.path.join(output_dir, md_filename)
 
-    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr)
+    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr, ocr_engine=args.ocr_engine)
     doc = extractor.extract(input_path)
     writer = MdWriter(default_font_name=args.font_name,
                       default_font_size=args.font_size)
@@ -128,7 +132,7 @@ def _do_docx2md(args):
         os.makedirs(images_dir, exist_ok=True)
         md_path = os.path.join(output_dir, input_base + ".md")
 
-    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr)
+    extractor = DocxExtractor(output_dir=images_dir, ocr=args.ocr, ocr_engine=args.ocr_engine)
     doc = extractor.extract(input_path)
     writer = MdWriter(default_font_name=args.font_name,
                       default_font_size=args.font_size)
