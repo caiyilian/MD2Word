@@ -277,6 +277,46 @@ class DocxExtractor:
                 return para
         return None
 
+    def _detect_toc(self, doc: DocxDocument) -> bool:
+        """Detect if document has a Table of Contents field."""
+        try:
+            for para in doc.paragraphs:
+                for run in para.runs:
+                    # Check for TOC field codes
+                    for child in run._r:
+                        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                        if tag == "fldChar":
+                            fldCharType = child.get(qn("w:fldCharType"))
+                            if fldCharType == "begin":
+                                # Look for instrText with TOC
+                                next_elem = child.getnext()
+                                while next_elem is not None:
+                                    next_tag = next_elem.tag.split("}")[-1] if "}" in next_elem.tag else next_elem.tag
+                                    if next_tag == "instrText":
+                                        if "TOC" in (next_elem.text or ""):
+                                            return True
+                                    elif next_tag == "fldChar":
+                                        break
+                                    next_elem = next_elem.getnext()
+        except Exception:
+            pass
+        return False
+
+    def _detect_bookmarks(self, doc: DocxDocument) -> List[str]:
+        """Detect bookmarks in the document."""
+        bookmarks = []
+        try:
+            for para in doc.paragraphs:
+                for child in para._p:
+                    tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                    if tag == "bookmarkStart":
+                        name = child.get(qn("w:name"))
+                        if name and name.startswith("heading_"):
+                            bookmarks.append(name)
+        except Exception:
+            pass
+        return bookmarks
+
     def _has_page_break(self, p_elem) -> bool:
         try:
             for br in p_elem.iter(_qname("br")):
@@ -960,6 +1000,16 @@ class DocxExtractor:
             metadata["subject"] = props.subject
         if props.keywords:
             metadata["keywords"] = props.keywords
+
+        # Detect TOC
+        if self._detect_toc(doc):
+            metadata["toc"] = True
+
+        # Detect bookmarks
+        bookmarks = self._detect_bookmarks(doc)
+        if bookmarks:
+            metadata["bookmarks"] = bookmarks
+
         return metadata
 
     def _extract_headers(self, doc: DocxDocument) -> List[str]:
