@@ -113,7 +113,16 @@ class MdWriter:
     def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0) -> List[str]:
         lines: List[str] = []
         indent = "  " * depth
-        prefix = f"{indent}{idx}. " if ordered else f"{indent}- "
+
+        # Handle task list checkboxes
+        if item.checked is not None:
+            checkbox = "[x] " if item.checked else "[ ] "
+            prefix = f"{indent}- {checkbox}"
+        elif ordered:
+            prefix = f"{indent}{idx}. "
+        else:
+            prefix = f"{indent}- "
+
         for element in item.elements:
             if isinstance(element, Paragraph):
                 text = self._write_inline(element.runs)
