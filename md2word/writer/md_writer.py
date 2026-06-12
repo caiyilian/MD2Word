@@ -107,10 +107,12 @@ class MdWriter:
         indent = "  " * list_block.level
         for idx, item in enumerate(list_block.items, start=1):
             lines.extend(self._write_list_item(item, list_block.ordered, idx,
-                                               depth=list_block.level))
+                                               depth=list_block.level,
+                                               numbering_prefix=list_block.numbering_prefix))
         return "\n".join(lines) + "\n" if lines else ""
 
-    def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0) -> List[str]:
+    def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0,
+                          numbering_prefix: str = "") -> List[str]:
         lines: List[str] = []
         indent = "  " * depth
 
@@ -119,7 +121,11 @@ class MdWriter:
             checkbox = "[x] " if item.checked else "[ ] "
             prefix = f"{indent}- {checkbox}"
         elif ordered:
-            prefix = f"{indent}{idx}. "
+            # Use custom numbering prefix if available
+            if numbering_prefix:
+                prefix = f"{indent}{numbering_prefix} "
+            else:
+                prefix = f"{indent}{idx}. "
         else:
             prefix = f"{indent}- "
 
