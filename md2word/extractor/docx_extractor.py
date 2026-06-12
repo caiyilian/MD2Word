@@ -83,6 +83,9 @@ class DocxExtractor:
         list_level: int = 0
         code_buffer: List[str] = []
 
+        # Multi-level numbering counters
+        self._number_counters: Dict[int, int] = {}
+
         # Extract metadata
         metadata = self._extract_metadata(doc)
 
@@ -325,14 +328,29 @@ class DocxExtractor:
 
                     # Determine if ordered based on numbering format
                     ordered = True
+                    text_fmt = "%1."
                     if numId in self._numbering_cache:
                         num_info = self._numbering_cache[numId]
                         fmt = num_info.get("fmt", "decimal")
                         ordered = fmt != "bullet"
+                        # Get format for this level
+                        levels = num_info.get("levels", {})
+                        level_info = levels.get(ilvl, {"fmt": "decimal", "text": "%1."})
+                        text_fmt = level_info.get("text", "%1.")
+
+                    # Track numbering for multi-level lists
+                    self._number_counters[ilvl] = self._number_counters.get(ilvl, 0) + 1
+                    # Reset counters for deeper levels
+                    for deeper_level in list(self._number_counters.keys()):
+                        if deeper_level > ilvl:
+                            self._number_counters[deeper_level] = 0
+
+                    # Generate numbering prefix based on format
+                    prefix = self._generate_numbering_prefix(ilvl, text_fmt)
 
                     item = ListItem(elements=[Paragraph(runs=runs)])
                     return ListBlock(ordered=ordered, items=[item], tight=True,
-                                    level=ilvl)
+                                    level=ilvl, numbering_prefix=prefix)
 
                 # Check for indentation-based list detection
                 ind = pPr.find(_qname("ind"))
@@ -942,6 +960,21 @@ class DocxExtractor:
             pass
         return sections
 
+    def _generate_numbering_prefix(self, level: int, text_fmt: str) -> str:
+        """Generate numbering prefix based on format and level."""
+        import re
+        # Replace %N with counter values
+        counters = {}
+        for i in range(level + 1):
+            counters[i + 1] = self._number_counters.get(i, 1)
+
+        def replace_counter(m):
+            n = int(m.group(1))
+            return str(counters.get(n, 1))
+
+        prefix = re.sub(r'%(\d+)', replace_counter, text_fmt)
+        return prefix
+
     def _load_numbering(self, doc: DocxDocument):
         """Load numbering definitions from word/numbering.xml."""
         try:
@@ -960,7 +993,9 @@ class DocxExtractor:
                     ilvl = int(lvl.get(f"{{{ns_w}}}ilvl"))
                     num_fmt = lvl.find(f"{{{ns_w}}}numFmt")
                     fmt = num_fmt.get(f"{{{ns_w}}}val") if num_fmt is not None else "decimal"
-                    levels[ilvl] = fmt
+                    lvl_text = lvl.find(f"{{{ns_w}}}lvlText")
+                    text_fmt = lvl_text.get(f"{{{ns_w}}}val") if lvl_text is not None else "%1."
+                    levels[ilvl] = {"fmt": fmt, "text": text_fmt}
                 abstract_nums[abstract_id] = levels
 
             # Map numId to abstract num
@@ -972,11 +1007,12 @@ class DocxExtractor:
                     if abstract_id in abstract_nums:
                         levels = abstract_nums[abstract_id]
                         # Get format for level 0 (or first available)
-                        fmt = levels.get(0, "decimal")
+                        level_0 = levels.get(0, {"fmt": "decimal", "text": "%1."})
                         self._numbering_cache[num_id] = {
                             "abstract_id": abstract_id,
                             "levels": levels,
-                            "fmt": fmt,
+                            "fmt": level_0["fmt"],
+                            "text": level_0["text"],
                         }
         except Exception:
             pass
