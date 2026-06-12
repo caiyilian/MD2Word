@@ -60,6 +60,14 @@ class DocxRenderer:
         if comments:
             self._insert_comment_ranges(doc, comments)
 
+        # Insert TOC field if requested
+        if document.metadata.get("toc"):
+            self._insert_toc_field(doc)
+
+        # Insert bookmarks if requested
+        if document.metadata.get("bookmarks"):
+            self._insert_bookmarks(doc)
+
         doc.save(output_path)
         return output_path
 
@@ -887,6 +895,62 @@ class DocxRenderer:
         fldChar_end = OxmlElement("w:fldChar")
         fldChar_end.set(qn("w:fldCharType"), "end")
         run3._r.append(fldChar_end)
+
+    def _insert_toc_field(self, doc: DocxDocument):
+        """Insert Table of Contents field at the beginning of the document."""
+        p = doc.add_paragraph()
+        p.paragraph_format.space_after = Pt(12)
+
+        # Add TOC field
+        r1 = OxmlElement("w:r")
+        fldChar_begin = OxmlElement("w:fldChar")
+        fldChar_begin.set(qn("w:fldCharType"), "begin")
+        r1.append(fldChar_begin)
+        p._p.append(r1)
+
+        r2 = OxmlElement("w:r")
+        instrText = OxmlElement("w:instrText")
+        instrText.set(qn("xml:space"), "preserve")
+        instrText.text = ' TOC \\o "1-3" \\h \\z \\u '
+        r2.append(instrText)
+        p._p.append(r2)
+
+        r3 = OxmlElement("w:r")
+        fldChar_separate = OxmlElement("w:fldChar")
+        fldChar_separate.set(qn("w:fldCharType"), "separate")
+        r3.append(fldChar_separate)
+        p._p.append(r3)
+
+        r4 = OxmlElement("w:r")
+        t = OxmlElement("w:t")
+        t.text = "Right-click to update field."
+        r4.append(t)
+        p._p.append(r4)
+
+        r5 = OxmlElement("w:r")
+        fldChar_end = OxmlElement("w:fldChar")
+        fldChar_end.set(qn("w:fldCharType"), "end")
+        r5.append(fldChar_end)
+        p._p.append(r5)
+
+        # Move TOC to the beginning of the document
+        p._p.getparent().remove(p._p)
+        doc.element.body.insert(0, p._p)
+
+    def _insert_bookmarks(self, doc: DocxDocument):
+        """Insert bookmarks for headings."""
+        for i, para in enumerate(doc.paragraphs):
+            if para.style.name.startswith("Heading"):
+                # Add bookmark start
+                bookmark_start = OxmlElement("w:bookmarkStart")
+                bookmark_start.set(qn("w:id"), str(i))
+                bookmark_start.set(qn("w:name"), f"heading_{i}")
+                para._p.insert(0, bookmark_start)
+
+                # Add bookmark end
+                bookmark_end = OxmlElement("w:bookmarkEnd")
+                bookmark_end.set(qn("w:id"), str(i))
+                para._p.append(bookmark_end)
 
     def _render_page_break(self, doc: DocxDocument):
         p = doc.add_paragraph()
