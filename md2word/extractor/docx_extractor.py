@@ -999,7 +999,7 @@ class DocxExtractor:
         return footers
 
     def _extract_sections(self, doc: DocxDocument) -> List[dict]:
-        """Extract section properties (page size, margins, orientation)."""
+        """Extract section properties (page size, margins, orientation, columns)."""
         sections = []
         try:
             for section in doc.sections:
@@ -1024,6 +1024,12 @@ class DocxExtractor:
                     sec_info["orientation"] = "landscape"
                 else:
                     sec_info["orientation"] = "portrait"
+                # Columns
+                try:
+                    if section.column_count > 1:
+                        sec_info["columns"] = section.column_count
+                except AttributeError:
+                    pass
                 sections.append(sec_info)
         except Exception:
             pass

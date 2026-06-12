@@ -7,6 +7,7 @@ from docx.shared import Pt, Inches, RGBColor, Emu
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from lxml import etree
 
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
@@ -31,6 +32,10 @@ class DocxRenderer:
         doc = DocxDocument()
         self._apply_style_config(doc)
         self._set_default_style(doc)
+
+        # Render headers and footers from metadata
+        if document.headers or document.footers:
+            self._render_headers_footers(doc, document)
 
         # Collect footnotes and comments from document
         footnotes = [e for e in document.elements if isinstance(e, Footnote)]
@@ -96,6 +101,21 @@ class DocxRenderer:
                 val = page_cfg.get(key)
                 if val is not None:
                     setattr(sec, attr, Inches(val))
+
+        # Column layout
+        columns = self.style.get("columns", 1)
+        if columns > 1:
+            sec = doc.sections[0]
+            sectPr = sec._sectPr
+            ns_w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+            # Remove existing cols element
+            existing_cols = sectPr.find("{%s}cols" % ns_w)
+            if existing_cols is not None:
+                sectPr.remove(existing_cols)
+            # Create new cols element
+            cols_xml = '<w:cols xmlns:w="%s" w:num="%d" w:space="720"/>' % (ns_w, columns)
+            cols = etree.fromstring(cols_xml.encode())
+            sectPr.append(cols)
 
     def _render_element(self, doc: DocxDocument, element: BlockElement):
         if isinstance(element, Heading):
@@ -796,6 +816,77 @@ class DocxRenderer:
         cm_ref.set(qn("w:id"), cm_id)
         r_elem.append(cm_ref)
         paragraph._p.append(r_elem)
+
+    def _render_headers_footers(self, doc: DocxDocument, document: Document):
+        """Render headers and footers from document metadata."""
+        section = doc.sections[0] if doc.sections else None
+        if not section:
+            return
+
+        # Check if page numbers are enabled in metadata
+        page_numbers = document.metadata.get("page_numbers", False)
+
+        # Render headers
+        if document.headers:
+            header = section.header
+            header.is_linked_to_previous = False
+            for i, header_text in enumerate(document.headers):
+                if i < len(header.paragraphs):
+                    p = header.paragraphs[i]
+                else:
+                    p = header.add_paragraph()
+                p.text = header_text
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Render footers
+        if document.footers or page_numbers:
+            footer = section.footer
+            footer.is_linked_to_previous = False
+
+            if document.footers:
+                for i, footer_text in enumerate(document.footers):
+                    if i < len(footer.paragraphs):
+                        p = footer.paragraphs[i]
+                    else:
+                        p = footer.add_paragraph()
+                    p.text = footer_text
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                    # Add page number after footer text if enabled
+                    if page_numbers:
+                        self._add_page_number_field(p)
+            elif page_numbers:
+                # No footer text, just page numbers
+                if footer.paragraphs:
+                    p = footer.paragraphs[0]
+                else:
+                    p = footer.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                self._add_page_number_field(p)
+
+    def _add_page_number_field(self, paragraph):
+        """Add page number field to a paragraph."""
+        # Create run for page number
+        run = paragraph.add_run()
+        run.font.size = Pt(9)
+
+        # Create the PAGE field
+        fldChar_begin = OxmlElement("w:fldChar")
+        fldChar_begin.set(qn("w:fldCharType"), "begin")
+        run._r.append(fldChar_begin)
+
+        # Create the instruction text
+        run2 = paragraph.add_run()
+        instrText = OxmlElement("w:instrText")
+        instrText.set(qn("xml:space"), "preserve")
+        instrText.text = " PAGE "
+        run2._r.append(instrText)
+
+        # Create the end field
+        run3 = paragraph.add_run()
+        fldChar_end = OxmlElement("w:fldChar")
+        fldChar_end.set(qn("w:fldCharType"), "end")
+        run3._r.append(fldChar_end)
 
     def _render_page_break(self, doc: DocxDocument):
         p = doc.add_paragraph()
