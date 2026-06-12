@@ -1014,6 +1014,11 @@ class DocxExtractor:
         if self._detect_rtl(doc):
             metadata["rtl"] = True
 
+        # Detect document protection
+        protection = self._detect_protection(doc)
+        if protection:
+            metadata["protection"] = protection
+
         return metadata
 
     def _detect_rtl(self, doc: DocxDocument) -> bool:
@@ -1029,6 +1034,21 @@ class DocxExtractor:
         except Exception:
             pass
         return False
+
+    def _detect_protection(self, doc: DocxDocument) -> Optional[str]:
+        """Detect document protection type."""
+        try:
+            for section in doc.sections:
+                sectPr = section._sectPr
+                docProtect = sectPr.find(qn("w:docProtect"))
+                if docProtect is not None:
+                    val = docProtect.get(qn("w:val"))
+                    enforcement = docProtect.get(qn("w:enforcement"))
+                    if enforcement == "1" and val:
+                        return val
+        except Exception:
+            pass
+        return None
 
     def _extract_headers(self, doc: DocxDocument) -> List[str]:
         """Extract header text from all sections."""

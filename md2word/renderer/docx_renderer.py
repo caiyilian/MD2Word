@@ -77,6 +77,11 @@ class DocxRenderer:
         if watermark:
             self._apply_watermark(doc, watermark)
 
+        # Apply document protection if requested
+        protection = document.metadata.get("protection")
+        if protection:
+            self._apply_protection(doc, protection)
+
         doc.save(output_path)
         return output_path
 
@@ -1014,6 +1019,30 @@ class DocxRenderer:
             r.append(rPr)
             r.append(t)
             p._p.append(r)
+
+    def _apply_protection(self, doc: DocxDocument, protection_type: str):
+        """Apply document protection (readonly, forms)."""
+        # Create document protection element (w:documentProtection)
+        docProtect = OxmlElement("w:documentProtection")
+
+        if protection_type == "readonly":
+            docProtect.set(qn("w:edit"), "readOnly")
+        elif protection_type == "forms":
+            docProtect.set(qn("w:edit"), "forms")
+        elif protection_type == "comments":
+            docProtect.set(qn("w:edit"), "comments")
+        elif protection_type == "trackedChanges":
+            docProtect.set(qn("w:edit"), "trackedChanges")
+        else:
+            docProtect.set(qn("w:edit"), "readOnly")
+
+        docProtect.set(qn("w:enforcement"), "1")
+        docProtect.set(qn("w:formatting"), "1")
+        docProtect.set(qn("w:cryptProviderType"), "rsaAES")
+
+        # Add to settings element
+        settings = doc.settings.element
+        settings.append(docProtect)
 
     def _render_page_break(self, doc: DocxDocument):
         p = doc.add_paragraph()
