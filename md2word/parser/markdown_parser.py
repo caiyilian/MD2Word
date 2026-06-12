@@ -372,9 +372,25 @@ class MarkdownParser:
     def _parse_list_item(self, token: dict) -> Optional[ListItem]:
         children = token.get("children", [])
         elements: List[BlockElement] = []
+        checked = None  # None=normal, False=unchecked, True=checked
+
         for child in children:
             ct = child.get("type", "")
             if ct in ("paragraph", "block_text"):
+                # Check for task list pattern in text
+                text_children = child.get("children", [])
+                if text_children:
+                    # Join all text to check for task list pattern
+                    full_raw = "".join(c.get("raw", "") for c in text_children)
+                    if full_raw.startswith("[ ] "):
+                        checked = False
+                        # Rebuild text children without the prefix
+                        remaining = full_raw[4:]
+                        child["children"] = [{"type": "text", "raw": remaining}]
+                    elif full_raw.startswith("[x] ") or full_raw.startswith("[X] "):
+                        checked = True
+                        remaining = full_raw[4:]
+                        child["children"] = [{"type": "text", "raw": remaining}]
                 elements.append(self._parse_paragraph(child))
             elif ct == "list":
                 elements.append(self._parse_list(child))
@@ -382,7 +398,7 @@ class MarkdownParser:
                 elements.append(self._parse_code_block(child))
         if not elements:
             return None
-        return ListItem(elements=elements)
+        return ListItem(elements=elements, checked=checked)
 
     def _parse_table(self, token: dict) -> Table:
         headers: List[str] = []

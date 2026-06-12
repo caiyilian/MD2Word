@@ -238,25 +238,53 @@ class DocxRenderer:
                           ordered: bool, idx: int, indent_level: int):
         for element in item.elements:
             if isinstance(element, Paragraph):
-                if ordered:
+                # Handle task list checkboxes
+                if item.checked is not None:
+                    checkbox = "\u2611 " if item.checked else "\u2610 "  # ☑ or ☐
+                    style_name = "List Bullet"
+                    if indent_level > 0:
+                        style_name += f" {indent_level + 1}"
+                    try:
+                        p = doc.add_paragraph(style=style_name)
+                    except Exception:
+                        p = doc.add_paragraph()
+                        indent = Inches(0.5 + indent_level * 0.4)
+                        p.paragraph_format.left_indent = indent
+                    # Add checkbox character
+                    checkbox_run = p.add_run(checkbox)
+                    checkbox_run.font.name = self.font_name
+                    checkbox_run.font.size = Pt(self.font_size)
+                    self._apply_runs(p, element.runs)
+                elif ordered:
                     style_name = f"List Number"
+                    if indent_level > 0:
+                        style_name += f" {indent_level + 1}"
+                    try:
+                        p = doc.add_paragraph(style=style_name)
+                    except Exception:
+                        p = doc.add_paragraph()
+                        indent = Inches(0.5 + indent_level * 0.4)
+                        p.paragraph_format.left_indent = indent
+                        prefix = f"{idx}. "
+                        prefix_run = p.add_run(prefix)
+                        prefix_run.font.name = self.font_name
+                        prefix_run.font.size = Pt(self.font_size)
+                    self._apply_runs(p, element.runs)
                 else:
                     style_name = f"List Bullet"
-                if indent_level > 0:
-                    style_name += f" {indent_level + 1}"
-
-                try:
-                    p = doc.add_paragraph(style=style_name)
-                except Exception:
-                    p = doc.add_paragraph()
-                    indent = Inches(0.5 + indent_level * 0.4)
-                    p.paragraph_format.left_indent = indent
-                    prefix = f"{idx}. " if ordered else "\u2022 "
-                    prefix_run = p.add_run(prefix)
-                    prefix_run.font.name = self.font_name
-                    prefix_run.font.size = Pt(self.font_size)
-
-                self._apply_runs(p, element.runs)
+                    if indent_level > 0:
+                        style_name += f" {indent_level + 1}"
+                    try:
+                        p = doc.add_paragraph(style=style_name)
+                    except Exception:
+                        p = doc.add_paragraph()
+                        indent = Inches(0.5 + indent_level * 0.4)
+                        p.paragraph_format.left_indent = indent
+                        prefix = "\u2022 "
+                        prefix_run = p.add_run(prefix)
+                        prefix_run.font.name = self.font_name
+                        prefix_run.font.size = Pt(self.font_size)
+                    self._apply_runs(p, element.runs)
 
             elif isinstance(element, Image):
                 if ordered:

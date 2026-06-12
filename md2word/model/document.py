@@ -57,6 +57,7 @@ class CodeBlock:
 @dataclass
 class ListItem:
     elements: List[Union[Paragraph, CodeBlock, Image]] = field(default_factory=list)
+    checked: Optional[bool] = None  # None=normal, False=unchecked, True=checked
 
 
 @dataclass
