@@ -55,24 +55,55 @@ def _qname(tag: str, ns: str = _NS_W) -> str:
 
 class DocxExtractor:
     def __init__(self, output_dir: str = "", ocr: bool = False, max_ocr_images: int = 0,
-                 style_mappings: Optional[Dict[str, str]] = None):
+                 style_mappings: Optional[Dict[str, str]] = None, ocr_engine: str = "glm-ocr"):
         self.output_dir = output_dir
         self._img_counter: int = 0
         self._saved_images: Set[str] = set()
         self._ocr = ocr
         self._ocr_engine = None
+        self._ocr_engine_name = ocr_engine
         self._ocr_count = 0
         self._max_ocr_images = max_ocr_images
         self._style_mappings = style_mappings or {}
         self._numbering_cache: Dict[int, dict] = {}
+        self._number_counters: Dict[int, int] = {}
+        
         if ocr:
+            self._init_ocr_engine(ocr_engine)
+
+    def _init_ocr_engine(self, engine_name: str):
+        """Initialize OCR engine with fallback."""
+        if engine_name == "glm-ocr":
+            # Try glm-ocr (ollama) first
             try:
-                from paddleocr import PaddleOCR
-                import warnings
-                warnings.filterwarnings("ignore")
-                self._ocr_engine = PaddleOCR(use_textline_orientation=True, lang="ch")
-            except ImportError:
+                import subprocess
+                result = subprocess.run(
+                    ["ollama", "list"],
+                    capture_output=True, timeout=10
+                )
+                if result.returncode == 0 and "glm-ocr" in result.stdout.decode("utf-8", errors="replace"):
+                    self._ocr_engine = "glm-ocr"
+                    return
+            except (ImportError, FileNotFoundError, subprocess.TimeoutExpired):
                 pass
+            # Fallback to PaddleOCR
+            print("glm-ocr not available, falling back to PaddleOCR...")
+            self._init_paddleocr()
+        elif engine_name == "paddleocr":
+            self._init_paddleocr()
+        else:
+            print(f"Unknown OCR engine: {engine_name}")
+
+    def _init_paddleocr(self):
+        """Initialize PaddleOCR engine."""
+        try:
+            from paddleocr import PaddleOCR
+            import warnings
+            warnings.filterwarnings("ignore")
+            self._ocr_engine = PaddleOCR(use_textline_orientation=True, lang="ch")
+            self._ocr_engine_name = "paddleocr"
+        except ImportError:
+            print("PaddleOCR not available. Install with: pip install paddleocr paddlepaddle")
 
     def extract(self, docx_path: str) -> Document:
         doc = DocxDocument(docx_path)
@@ -604,36 +635,74 @@ class DocxExtractor:
 
         # Run OCR if enabled
         ocr_text = None
-        if self._ocr and self._ocr_engine and self.output_dir:
+        if self._ocr and self.output_dir:
             self._ocr_count += 1
             if self._max_ocr_images == 0 or self._ocr_count <= self._max_ocr_images:
                 img_path = os.path.join(self.output_dir, img_name)
                 try:
-                    result = self._ocr_engine.ocr(img_path)
-                    if result and isinstance(result, list) and len(result) > 0:
-                        r = result[0]
-                        if hasattr(r, 'get'):
-                            # New PaddleOCR API: result is a dict-like object
-                            texts = r.get('rec_texts', [])
-                            if texts:
-                                ocr_text = "\n".join(texts)
-                        elif isinstance(r, (list, tuple)):
-                            # Old PaddleOCR API: result is list of [box, (text, score)]
-                            lines = []
-                            for item in r:
-                                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                                    text_info = item[1]
-                                    if isinstance(text_info, (list, tuple)):
-                                        lines.append(text_info[0])
-                                    else:
-                                        lines.append(str(text_info))
-                            if lines:
-                                ocr_text = "\n".join(lines)
+                    if self._ocr_engine_name == "glm-ocr":
+                        ocr_text = self._run_glm_ocr(img_path)
+                    elif self._ocr_engine_name == "paddleocr" and self._ocr_engine:
+                        ocr_text = self._run_paddleocr(img_path)
                 except Exception:
                     pass
 
         return Image(src=rel_path, alt=alt_text, width=width_str, height=height_str,
                      ocr_text=ocr_text)
+
+    def _run_glm_ocr(self, img_path: str) -> Optional[str]:
+        """Run glm-ocr (ollama) on an image."""
+        import subprocess
+        import re
+        try:
+            abs_path = os.path.abspath(img_path)
+            result = subprocess.run(
+                ["ollama", "run", "glm-ocr", f"Text Recognition: {abs_path}"],
+                capture_output=True, timeout=60
+            )
+            text = result.stdout.decode("utf-8", errors="replace").strip()
+            # Clean ANSI escape codes
+            text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+            text = re.sub(r'\[\?25[hl]', '', text)
+            text = re.sub(r'\[\?2026[hl]', '', text)
+            text = re.sub(r'\[K', '', text)
+            text = re.sub(r'\[2K', '', text)
+            text = re.sub(r'\[1G', '', text)
+            # Clean up markdown formatting
+            if text.startswith("```markdown"):
+                text = text[len("```markdown"):].strip()
+            if text.endswith("```"):
+                text = text[:-3].strip()
+            return text if text else None
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return None
+
+    def _run_paddleocr(self, img_path: str) -> Optional[str]:
+        """Run PaddleOCR on an image."""
+        try:
+            result = self._ocr_engine.ocr(img_path)
+            if result and isinstance(result, list) and len(result) > 0:
+                r = result[0]
+                if hasattr(r, 'get'):
+                    # New PaddleOCR API: result is a dict-like object
+                    texts = r.get('rec_texts', [])
+                    if texts:
+                        return "\n".join(texts)
+                elif isinstance(r, (list, tuple)):
+                    # Old PaddleOCR API: result is list of [box, (text, score)]
+                    lines = []
+                    for item in r:
+                        if isinstance(item, (list, tuple)) and len(item) >= 2:
+                            text_info = item[1]
+                            if isinstance(text_info, (list, tuple)):
+                                lines.append(text_info[0])
+                            else:
+                                lines.append(str(text_info))
+                    if lines:
+                        return "\n".join(lines)
+        except Exception:
+            pass
+        return None
 
     def _save_image(self, image_part) -> str:
         ext = self._get_image_ext(image_part)
