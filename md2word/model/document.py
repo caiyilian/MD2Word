@@ -24,7 +24,6 @@ class Image:
     width: Optional[str] = None
     height: Optional[str] = None
     align: Optional[str] = None
-    ocr_text: Optional[str] = None
 
 
 @dataclass
@@ -57,7 +56,6 @@ class CodeBlock:
 @dataclass
 class ListItem:
     elements: List[Union[Paragraph, CodeBlock, Image]] = field(default_factory=list)
-    checked: Optional[bool] = None  # None=normal, False=unchecked, True=checked
 
 
 @dataclass
@@ -65,8 +63,6 @@ class ListBlock:
     ordered: bool
     items: List[ListItem] = field(default_factory=list)
     tight: bool = True
-    level: int = 0
-    numbering_prefix: str = ""  # Custom numbering prefix (e.g., "1.1.2")
 
 
 @dataclass
@@ -79,12 +75,6 @@ class Table:
 @dataclass
 class HorizontalRule:
     pass
-
-
-@dataclass
-class Blockquote:
-    runs: List[InlineElement] = field(default_factory=list)
-    level: int = 1
 
 
 @dataclass
@@ -110,16 +100,12 @@ class Comment:
     author: str
     text: str
     date: Optional[str] = None
-    target: Optional[str] = None
 
 
-BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula, PageBreak, Footnote, Comment, Blockquote]
+BlockElement = Union[Heading, Paragraph, CodeBlock, ListBlock, Table, Image, HorizontalRule, Formula, PageBreak, Footnote, Comment]
 
 
 @dataclass
 class Document:
     metadata: dict = field(default_factory=dict)
     elements: List[BlockElement] = field(default_factory=list)
-    headers: List[str] = field(default_factory=list)
-    footers: List[str] = field(default_factory=list)
-    sections: List[dict] = field(default_factory=list)

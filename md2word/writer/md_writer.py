@@ -1,65 +1,26 @@
 from __future__ import annotations
-from typing import Dict, List, Optional
+from typing import List
 
 from md2word.model.document import (
     TextRun, Image, Heading, Paragraph, CodeBlock, Hyperlink,
     ListBlock, ListItem, Table, HorizontalRule, Formula, PageBreak,
-    Footnote, Comment, Blockquote,
+    Footnote, Comment,
     Document, InlineElement, BlockElement,
 )
 
 
 class MdWriter:
     def __init__(self, default_font_name: str = "\u7b49\u7ebf",
-                 default_font_size: int = 12,
-                 style_mappings: Optional[Dict[str, str]] = None):
+                 default_font_size: int = 12):
         self.default_font_name = default_font_name
         self.default_font_size = default_font_size
-        self._style_mappings = style_mappings or {}
 
     def write(self, document: Document) -> str:
         lines: List[str] = []
-
-        # Write metadata as YAML frontmatter
-        if document.metadata:
-            lines.append("---")
-            for key, value in document.metadata.items():
-                lines.append(f"{key}: {value}")
-            lines.append("---")
-            lines.append("")
-
-        # Write headers
-        if document.headers:
-            for i, header in enumerate(document.headers):
-                lines.append(f"<!-- Header {i + 1}: {header} -->")
-            lines.append("")
-
-        # Write elements
         for element in document.elements:
             text = self._write_block(element)
             if text:
                 lines.append(text)
-
-        # Write footers
-        if document.footers:
-            lines.append("")
-            for i, footer in enumerate(document.footers):
-                lines.append(f"<!-- Footer {i + 1}: {footer} -->")
-
-        # Write section info as HTML comments
-        if document.sections:
-            lines.append("")
-            for i, sec in enumerate(document.sections):
-                parts = []
-                if "orientation" in sec:
-                    parts.append(f"orientation={sec['orientation']}")
-                if "page_width" in sec:
-                    parts.append(f"width={sec['page_width']}")
-                if "page_height" in sec:
-                    parts.append(f"height={sec['page_height']}")
-                if parts:
-                    lines.append(f"<!-- Section {i + 1}: {', '.join(parts)} -->")
-
         return "\n".join(lines) + "\n"
 
     def _write_block(self, element: BlockElement) -> str:
@@ -85,8 +46,6 @@ class MdWriter:
             return f"[^{element.footnote_id}]: {element.text}"
         if isinstance(element, Comment):
             return f'<!-- {element.author}: {element.text} -->\n'
-        if isinstance(element, Blockquote):
-            return self._write_blockquote(element)
         return ""
 
     def _write_heading(self, heading: Heading) -> str:
@@ -104,31 +63,14 @@ class MdWriter:
 
     def _write_list(self, list_block: ListBlock) -> str:
         lines: List[str] = []
-        indent = "  " * list_block.level
         for idx, item in enumerate(list_block.items, start=1):
-            lines.extend(self._write_list_item(item, list_block.ordered, idx,
-                                               depth=list_block.level,
-                                               numbering_prefix=list_block.numbering_prefix))
+            lines.extend(self._write_list_item(item, list_block.ordered, idx))
         return "\n".join(lines) + "\n" if lines else ""
 
-    def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0,
-                          numbering_prefix: str = "") -> List[str]:
+    def _write_list_item(self, item: ListItem, ordered: bool, idx: int, depth: int = 0) -> List[str]:
         lines: List[str] = []
         indent = "  " * depth
-
-        # Handle task list checkboxes
-        if item.checked is not None:
-            checkbox = "[x] " if item.checked else "[ ] "
-            prefix = f"{indent}- {checkbox}"
-        elif ordered:
-            # Use custom numbering prefix if available
-            if numbering_prefix:
-                prefix = f"{indent}{numbering_prefix} "
-            else:
-                prefix = f"{indent}{idx}. "
-        else:
-            prefix = f"{indent}- "
-
+        prefix = f"{indent}{idx}. " if ordered else f"{indent}- "
         for element in item.elements:
             if isinstance(element, Paragraph):
                 text = self._write_inline(element.runs)
@@ -188,12 +130,7 @@ class MdWriter:
                 parts.append(f"align={image.align}")
             if parts:
                 attrs = "{:" + " ".join(parts) + "}"
-        img_line = f"![{alt}]({src}){attrs}\n"
-        if image.ocr_text:
-            img_line += f"\n> OCR 文本：\n>\n"
-            for line in image.ocr_text.split("\n"):
-                img_line += f"> {line}\n"
-        return img_line
+        return f"![{alt}]({src}){attrs}\n"
 
     def _write_formula(self, formula: Formula) -> str:
         latex = formula.latex
@@ -201,12 +138,6 @@ class MdWriter:
             return f"$$\n{latex}\n$$\n"
         else:
             return f"${latex}$\n"
-
-    def _write_blockquote(self, blockquote: Blockquote) -> str:
-        text = self._write_inline(blockquote.runs)
-        prefix = "> " * blockquote.level
-        lines = text.split("\n")
-        return "\n".join(f"{prefix}{line}" if line.strip() else ">" for line in lines) + "\n"
 
     def _write_inline(self, runs: List[InlineElement]) -> str:
         parts: List[str] = []
