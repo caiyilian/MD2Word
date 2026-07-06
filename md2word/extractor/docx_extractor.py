@@ -310,8 +310,12 @@ class DocxExtractor:
 
             rFonts = rPr.find(_qname("rFonts"))
             if rFonts is not None:
-                font_name = rFonts.get(_qname("ascii", _NS_R)) or \
-                            rFonts.get(_qname("hAnsi", _NS_R))
+                font_name = (
+                    rFonts.get(_qname("ascii")) or
+                    rFonts.get(_qname("hAnsi")) or
+                    rFonts.get(_qname("eastAsia")) or
+                    rFonts.get(_qname("cs"))
+                )
 
             sz = rPr.find(_qname("sz"))
             if sz is not None:
