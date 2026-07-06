@@ -16,6 +16,20 @@ Markdown 与 Word (.docx) 双向转换工具，支持图片插入、精确页数
   - 标题、段落、列表（有序/无序）、水平线
   - 加粗、斜体、下划线、删除线、行内代码
   - 上标/下标、自定义字体字号还原
+- **Word → 结构化元数据 → Word** (.docx → JSON + 资源 → .docx)
+  - 将 docx ZIP 包中的 XML 部件提取为可读 JSON 树
+  - 生成语义化 document 索引，覆盖正文、段落/Run 格式、表格、图片、节属性、脚注/尾注/批注等信息
+  - 提取 DrawingML 图片裁剪、旋转/翻转、边框线条、效果和图片超链接
+  - 提取 VML 形状、文本框、填充/线条和形状内文本
+  - 提取样式、编号、设置、字体表、主题和 docProps 文档属性的语义摘要
+  - 提取域代码、内容控件和基础修订追踪的语义摘要
+  - 识别图表、SmartArt/diagrams、OLE 嵌入、VBA、ActiveX、glossary、people、customXml 等高级包部件
+  - 提取图表类型、系列名称、分类/数值引用、缓存点、坐标轴和图例摘要
+  - 提取 SmartArt 数据点/连接、布局节点、样式标签和颜色定义摘要
+  - 将图片、嵌入对象等二进制资源保存到独立资源目录
+  - 保存 ZIP 容器级 exact payload cache；结构化 XML/资源未改动时可复现原始压缩流，实现真实 docx 的字节级一致还原
+  - 可从元数据和资源目录重建可打开的 docx 包
+  - 详细阶段计划见 `docs/issue41_roundtrip_plan.md`
 - 命令行和 Python API 双模式
 
 ## 安装
@@ -40,6 +54,15 @@ md2word input.md -o output.docx --style style.yaml
 
 # Word 转 Markdown
 md2word input.docx -r -o output.md
+
+# Word 转结构化元数据
+md2word input.docx --extract-meta -o output/input_meta
+
+# 元数据还原为 Word
+md2word output/input_meta --restore-meta -o restored.docx
+
+# 提取、还原并验证字节级一致性
+md2word input.docx --roundtrip-meta -o output/input_roundtrip
 ```
 
 ### Python API
@@ -60,6 +83,17 @@ extractor = DocxExtractor()
 doc = extractor.extract("input.docx")
 writer = MdWriter()
 md_text = writer.write(doc)
+
+# Word 结构化元数据闭环
+from md2word.meta import extract_docx_metadata, restore_docx_from_metadata
+
+extract_docx_metadata("input.docx", "output/input_meta")
+restore_docx_from_metadata("output/input_meta", "restored.docx")
+
+from md2word.meta import verify_docx_metadata_roundtrip
+
+result = verify_docx_metadata_roundtrip("input.docx", "output/input_roundtrip")
+print(result["byte_identical"])
 ```
 
 ## 依赖
