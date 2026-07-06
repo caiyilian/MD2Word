@@ -3,8 +3,12 @@ import os
 import re
 from typing import Optional
 
-import latex2mathml.converter
 from lxml import etree
+
+try:
+    import latex2mathml.converter as _latex2mathml_converter
+except ModuleNotFoundError:
+    _latex2mathml_converter = None
 
 
 _NS_M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
@@ -55,8 +59,11 @@ def _fix_empty_base(omml_str: str) -> str:
 
 
 def latex_to_omml(latex: str, display: bool = False) -> Optional[str]:
+    if _latex2mathml_converter is None:
+        return None
+
     try:
-        mathml_str = latex2mathml.converter.convert(
+        mathml_str = _latex2mathml_converter.convert(
             latex,
             display="block" if display else "inline",
         )

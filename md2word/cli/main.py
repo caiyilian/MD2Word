@@ -6,6 +6,11 @@ import sys
 from md2word import MD2Word
 from md2word.exceptions import MD2WordError
 from md2word.extractor.docx_extractor import DocxExtractor
+from md2word.meta import (
+    extract_docx_metadata,
+    restore_docx_from_metadata,
+    verify_docx_metadata_roundtrip,
+)
 from md2word.writer.md_writer import MdWriter
 
 
@@ -26,6 +31,12 @@ def build_parser():
                         help="Path to YAML style config file")
     parser.add_argument("--reverse", "-r", action="store_true",
                         help="Reverse mode: convert .docx to .md")
+    parser.add_argument("--extract-meta", action="store_true",
+                        help="Extract .docx to structured metadata JSON and resources")
+    parser.add_argument("--restore-meta", action="store_true",
+                        help="Restore .docx from metadata directory or JSON file")
+    parser.add_argument("--roundtrip-meta", action="store_true",
+                        help="Extract metadata, restore .docx, and verify byte equality")
     parser.add_argument("--to-images", action="store_true",
                         help="Convert .docx pages to PNG images")
     parser.add_argument("--compare", nargs=2, metavar=("DOCX_A", "DOCX_B"),
@@ -90,6 +101,43 @@ def _do_reverse(args):
         print(f"Images extracted: {img_count} (saved to {images_dir}/)")
 
 
+def _do_extract_meta(args):
+    input_path = args.input
+    output_dir = args.output
+    if output_dir is None:
+        base = os.path.splitext(os.path.basename(input_path))[0]
+        output_dir = os.path.join("output", base + "_meta")
+    extract_docx_metadata(input_path, output_dir)
+    print(f"Metadata extracted: {input_path} -> {output_dir}")
+
+
+def _do_restore_meta(args):
+    input_path = args.input
+    output_path = args.output
+    if output_path is None:
+        base = os.path.splitext(os.path.basename(os.path.normpath(input_path)))[0]
+        output_path = base + ".docx"
+    restore_docx_from_metadata(input_path, output_path)
+    print(f"Restored: {input_path} -> {output_path}")
+
+
+def _do_roundtrip_meta(args):
+    input_path = args.input
+    output_dir = args.output
+    if output_dir is None:
+        base = os.path.splitext(os.path.basename(input_path))[0]
+        output_dir = os.path.join("output", base + "_roundtrip")
+
+    result = verify_docx_metadata_roundtrip(input_path, output_dir)
+    print(f"Metadata: {result['metadata_dir']}")
+    print(f"Restored: {result['restored']}")
+    print(f"Byte-identical: {'yes' if result['byte_identical'] else 'no'}")
+    print(f"Source SHA256:   {result['source_sha256']}")
+    print(f"Restored SHA256: {result['restored_sha256']}")
+    if not result["byte_identical"]:
+        sys.exit(2)
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -105,6 +153,12 @@ def main():
             docx_to_images(args.input,
                            output_dir=args.output or "output_images",
                            dpi=args.dpi)
+        elif args.extract_meta:
+            _do_extract_meta(args)
+        elif args.restore_meta:
+            _do_restore_meta(args)
+        elif args.roundtrip_meta:
+            _do_roundtrip_meta(args)
         elif args.reverse:
             _do_reverse(args)
         else:
