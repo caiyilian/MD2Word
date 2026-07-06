@@ -11,6 +11,7 @@ from md2word.meta import (
     restore_docx_from_metadata,
     verify_docx_metadata_roundtrip,
 )
+from md2word.html import render_docx_to_html, render_metadata_to_html
 from md2word.writer.md_writer import MdWriter
 
 
@@ -37,6 +38,8 @@ def build_parser():
                         help="Restore .docx from metadata directory or JSON file")
     parser.add_argument("--roundtrip-meta", action="store_true",
                         help="Extract metadata, restore .docx, and verify byte equality")
+    parser.add_argument("--to-html", action="store_true",
+                        help="Render .docx or extracted metadata to standalone HTML")
     parser.add_argument("--to-images", action="store_true",
                         help="Convert .docx pages to PNG images")
     parser.add_argument("--compare", nargs=2, metavar=("DOCX_A", "DOCX_B"),
@@ -138,6 +141,20 @@ def _do_roundtrip_meta(args):
         sys.exit(2)
 
 
+def _do_to_html(args):
+    input_path = args.input
+    output_path = args.output
+    if output_path is None:
+        base = os.path.splitext(os.path.basename(os.path.normpath(input_path)))[0]
+        output_path = os.path.join("output", base + ".html")
+
+    if os.path.isdir(input_path) or input_path.lower().endswith(".json"):
+        render_metadata_to_html(input_path, output_path)
+    else:
+        render_docx_to_html(input_path, output_path)
+    print(f"HTML rendered: {input_path} -> {output_path}")
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
@@ -159,6 +176,8 @@ def main():
             _do_restore_meta(args)
         elif args.roundtrip_meta:
             _do_roundtrip_meta(args)
+        elif args.to_html:
+            _do_to_html(args)
         elif args.reverse:
             _do_reverse(args)
         else:
