@@ -30,6 +30,11 @@ Markdown 与 Word (.docx) 双向转换工具，支持图片插入、精确页数
   - 保存 ZIP 容器级 exact payload cache；结构化 XML/资源未改动时可复现原始压缩流，实现真实 docx 的字节级一致还原
   - 可从元数据和资源目录重建可打开的 docx 包
   - 详细阶段计划见 `docs/issue41_roundtrip_plan.md`
+- **Word → 结构化元数据 → HTML** (.docx → JSON + 资源 → .html)
+  - `--to-html` 先提取 metadata，再从 `document.json` 语义索引渲染 HTML
+  - 输出独立 HTML，图片资源以内嵌 data URI 呈现，公式加载 MathJax
+  - 覆盖标题、段落/run 样式、图片、表格合并、列表层级、页眉页脚、脚注/尾注/批注
+  - 标准覆盖样例：`examples/full_coverage.md` 和 `examples/full_coverage.docx`
 - 命令行和 Python API 双模式
 
 ## 安装
@@ -63,6 +68,12 @@ md2word output/input_meta --restore-meta -o restored.docx
 
 # 提取、还原并验证字节级一致性
 md2word input.docx --roundtrip-meta -o output/input_roundtrip
+
+# 从 docx metadata 渲染 HTML
+md2word input.docx --to-html -o output/input.html
+
+# 从已提取的 metadata 目录渲染 HTML
+md2word output/input_meta --to-html -o output/input.html
 ```
 
 ### Python API
@@ -94,6 +105,11 @@ from md2word.meta import verify_docx_metadata_roundtrip
 
 result = verify_docx_metadata_roundtrip("input.docx", "output/input_roundtrip")
 print(result["byte_identical"])
+
+from md2word.html import render_docx_to_html, render_metadata_to_html
+
+render_docx_to_html("input.docx", "output/input.html")
+render_metadata_to_html("output/input_meta", "output/input-from-meta.html")
 ```
 
 ## 依赖
